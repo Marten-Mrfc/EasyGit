@@ -64,9 +64,43 @@ pub async fn get_diff(
             &["diff", "--staged", "--diff-filter=A", "--", file_ref],
         )?;
         out2.stdout
+    } else if out.stdout.is_empty() && !staged {
+        // Might be an untracked file not known to git
+        let ls_out = git_run(&repo_path, &["ls-files", "--", file_ref])?;
+        if ls_out.stdout.trim().is_empty() {
+            // File is untracked — show its entire content as additions
+            let out2 = git_run(
+                &repo_path,
+                &["diff", "--no-index", "--", "/dev/null", file_ref],
+            )?;
+            out2.stdout
+        } else {
+            String::new()
+        }
     } else {
         out.stdout
     })
+}
+
+/// Full unified patch for a single commit (all changed files).
+#[tauri::command]
+pub async fn get_commit_diff(
+    repo_path: String,
+    hash: String,
+) -> Result<String, String> {
+    let hash_ref = hash.as_str();
+    // --root handles the initial commit (no parent)
+    let out = git_run(
+        &repo_path,
+        &["diff-tree", "--root", "--no-commit-id", "-p", "-r", hash_ref],
+    )?;
+    if out.success {
+        return Ok(out.stdout);
+    }
+    // Fallback: diff against the empty tree SHA
+    let empty_tree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+    let out2 = git_run(&repo_path, &["diff", empty_tree, hash_ref])?;
+    Ok(out2.stdout)
 }
 
 /// Commit log for the whole repo (recent commits).
@@ -137,7 +171,7 @@ pub async fn get_blame(
 }
 
 fn parse_blame_porcelain(output: &str) -> Vec<BlameLine> {
-    let mut lines = output.lines().peekable();
+    let lines = output.lines().peekable();
     let mut result = Vec::new();
     // Track commit metadata we've already seen (hash → (author, date))
     let mut seen: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();

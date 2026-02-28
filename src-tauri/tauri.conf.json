@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "EasyGit",
-  "version": "0.1.0",
   "identifier": "dev.marten-mrfcyt.easygit",
   "build": {
     "beforeDevCommand": "bun run dev",

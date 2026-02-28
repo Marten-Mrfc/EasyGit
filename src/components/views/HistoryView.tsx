@@ -46,11 +46,7 @@ export function HistoryView() {
     setCommitDiff("");
     setDiffLoading(true);
     try {
-      // Show diff: current commit vs parent
-      const diff = await git.getDiff(repoPath!, `${c.hash}^..${c.hash}`, false).catch(async () => {
-        // First commit has no parent — diff against empty tree
-        return git.getDiff(repoPath!, c.hash, false);
-      });
+      const diff = await git.getCommitDiff(repoPath!, c.hash);
       setCommitDiff(diff);
     } catch (e) {
       toast.error(String(e));

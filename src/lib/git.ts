@@ -131,6 +131,9 @@ export const git = {
   getDiff: (repoPath: string, filePath: string, staged: boolean) =>
     invoke<string>("get_diff", { repoPath, filePath, staged }),
 
+  getCommitDiff: (repoPath: string, hash: string) =>
+    invoke<string>("get_commit_diff", { repoPath, hash }),
+
   getLog: (repoPath: string, limit = 100) =>
     invoke<CommitInfo[]>("get_log", { repoPath, limit }),
 

@@ -4,7 +4,13 @@ on:
   workflow_dispatch:
   push:
     tags:
-      - "v*"
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v1.2.3) — must already exist in the repo"
+        required: true
+        default: "v0.1.0"
 
 jobs:
   release:
@@ -15,8 +21,34 @@ jobs:
       contents: write
 
     steps:
+      - name: Verify signing key is configured
+        shell: pwsh
+        run: |
+          if (-not "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}") {
+            Write-Error "TAURI_SIGNING_PRIVATE_KEY secret is not set. Set it in Settings → Secrets → Actions before releasing."
+            exit 1
+          }
+
+      - name: Resolve tag & version
+        id: meta
+        shell: pwsh
+        run: |
+          $tag = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.tag }}" } else { "${{ github.ref_name }}" }
+          $version = $tag.TrimStart("v")
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.tag }}
+
+      - name: Sync version to Cargo.toml
+        shell: pwsh
+        run: |
+          $v = "${{ steps.meta.outputs.version }}"
+          (Get-Content src-tauri/Cargo.toml -Raw) -replace '(?m)^version = "[^"]*"', "version = `"$v`"" |
+            Set-Content src-tauri/Cargo.toml -NoNewline
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -39,8 +71,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "EasyGit ${{ github.ref_name }}"
+          tagName: ${{ steps.meta.outputs.tag }}
+          releaseName: "EasyGit ${{ steps.meta.outputs.tag }}"
           releaseBody: |
             See the **Assets** below to download and install EasyGit.
 
@@ -48,6 +80,7 @@ jobs:
             Download `EasyGit_*_x64-setup.exe` and run it — no admin rights required (per-user install).
 
             ### Auto-update
-            Existing installs will be notified automatically via Settings → About.
+            Existing installs will be notified automatically via **Settings → About**.
           releaseDraft: false
           prerelease: false
+          includeUpdaterJson: true

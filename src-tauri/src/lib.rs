@@ -6,7 +6,7 @@ use commands::{
     git::git_version,
     oauth::{github_poll_device_token, github_start_device_flow},
     remote::{create_github_repo, fetch, get_remotes, pull, push},
-    repo::{commit, get_current_branch, get_status, stage_files, unstage_files},
+    repo::{clone_repo, commit, get_current_branch, get_status, stage_files, unstage_files},
     stash::{list_stashes, stash_apply, stash_drop, stash_pop, stash_push},
     tags::{
         create_github_release, create_tag, delete_remote_tag, delete_tag,
@@ -30,6 +30,7 @@ pub fn run() {
             unstage_files,
             commit,
             get_current_branch,
+            clone_repo,
             get_branches,
             switch_branch,
             create_branch,

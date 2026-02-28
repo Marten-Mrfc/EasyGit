@@ -1,12 +1,12 @@
 import "./App.css";
 import { lazy, Suspense, useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ThemeProvider } from "next-themes";
 import { AppShell } from "@/components/layout/AppShell";
 // OpenRepoView and PlaceholderView are lightweight — keep them eager so the
 // initial blank-repo screen appears without any loading flash.
 import { OpenRepoView } from "@/components/views/OpenRepoView";
 import { PlaceholderView } from "@/components/views/PlaceholderView";
-import { Spinner } from "@/components/ui/spinner";
 import { useRepoStore } from "@/store/repoStore";
 import { useAuthStore } from "@/store/authStore";
 import type { View } from "@/components/layout/Sidebar";
@@ -56,7 +56,7 @@ function AppContent() {
   return (
     <AppShell>
       {(view) => (
-        <Suspense fallback={<div className="flex h-full items-center justify-center"><Spinner /></div>}>
+        <Suspense fallback={null}>
           <ViewRouter view={view} />
         </Suspense>
       )}
@@ -66,9 +66,11 @@ function AppContent() {
 
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <AppContent />
-    </QueryClientProvider>
+    <ThemeProvider attribute="class" defaultTheme="dark" disableTransitionOnChange>
+      <QueryClientProvider client={queryClient}>
+        <AppContent />
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }
 

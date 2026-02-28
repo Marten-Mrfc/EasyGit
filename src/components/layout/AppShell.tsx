@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Titlebar } from "./Titlebar";
 import { Sidebar, type View } from "./Sidebar";
+import { CommandPalette } from "./CommandPalette";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -10,6 +11,18 @@ interface AppShellProps {
 
 export function AppShell({ children }: AppShellProps) {
   const [activeView, setActiveView] = useState<View>("changes");
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -23,6 +36,11 @@ export function AppShell({ children }: AppShellProps) {
         </div>
       </div>
       <Toaster position="bottom-right" richColors />
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        onNavigate={(view) => { setActiveView(view); setPaletteOpen(false); }}
+      />
     </TooltipProvider>
   );
 }

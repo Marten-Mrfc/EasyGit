@@ -10,6 +10,7 @@ import {
   ExternalLink,
   AlertTriangle,
 } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
@@ -656,9 +657,16 @@ export function ReleasesView() {
       {/* Body */}
       <ScrollArea className="flex-1">
         {loading ? (
-          <div className="flex items-center justify-center py-16 text-muted-foreground gap-2 text-sm">
-            <Loader2 size={15} className="animate-spin" />
-            Loading tags…
+          <div className="p-2 space-y-px">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3 px-3 py-2.5 rounded-md">
+                <Skeleton className="h-3.5 w-3.5 rounded-full shrink-0" />
+                <div className="flex-1 space-y-1.5">
+                  <Skeleton className="h-2.5 w-24" />
+                </div>
+                <Skeleton className="h-2.5 w-14" />
+              </div>
+            ))}
           </div>
         ) : tags.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 gap-3 text-center px-8">

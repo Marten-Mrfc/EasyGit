@@ -1,5 +1,6 @@
-import { Minus, Square, X } from "lucide-react";
+import { Minus, Moon, Square, Sun, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -45,6 +46,8 @@ function WindowButton({
 }
 
 export function Titlebar() {
+  const { resolvedTheme, setTheme } = useTheme();
+
   return (
     <header
       className="h-10 flex items-center justify-between bg-sidebar border-b border-border select-none shrink-0"
@@ -72,8 +75,14 @@ export function Titlebar() {
         <span className="text-sm font-medium text-foreground">EasyGit</span>
       </div>
 
-      {/* Right: window controls — NOT drag region */}
+      {/* Right: theme toggle + window controls — NOT drag region */}
       <div className="flex items-center h-full">
+        <WindowButton
+          label={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+        >
+          {resolvedTheme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
+        </WindowButton>
         <WindowButton label="Minimize" onClick={() => appWindow.minimize()}>
           <Minus size={14} />
         </WindowButton>

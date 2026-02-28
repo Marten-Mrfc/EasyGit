@@ -11,6 +11,7 @@ import {
 import { FileChecklist } from "@/components/commit/FileChecklist";
 import { ConventionalCommitBuilder } from "@/components/commit/ConventionalCommitBuilder";
 import { DiffSheet } from "@/components/diff/DiffSheet";
+import { PublishToGitHubDialog } from "@/components/remote/PublishToGitHubDialog";
 import { useRepoStore } from "@/store/repoStore";
 import { git, type FileStatus } from "@/lib/git";
 
@@ -48,17 +49,48 @@ export function ChangesView() {
 
   async function handlePush() {
     if (!repoPath) return;
+    setIsPushing(true);
     try {
-      const msg = await git.push(repoPath);
-      toast.success(msg || "Pushed successfully");
-    } catch (e) {
-      // first push: try with --set-upstream
-      try {
-        const msg = await git.push(repoPath, true);
-        toast.success(msg || "Pushed with upstream set");
-      } catch (e2) {
-        toast.error(`Push failed: ${String(e2)}`);
+      // Check if any remote is configured
+      const remotes = await git.getRemotes(repoPath);
+      if (remotes.length === 0) {
+        // No remote — offer to publish to GitHub
+        setPublishOpen(true);
+        return;
       }
+      try {
+        const msg = await git.push(repoPath);
+        toast.success(msg || "Pushed successfully");
+      } catch {
+        // No upstream set yet — push with --set-upstream
+        try {
+          const msg = await git.push(repoPath, true);
+          toast.success(msg || "Pushed with upstream set");
+        } catch (e2) {
+          toast.error(`Push failed: ${String(e2)}`);
+        }
+      }
+    } catch (e) {
+      toast.error(`Push failed: ${String(e)}`);
+    } finally {
+      setIsPushing(false);
+    }
+  }
+
+  async function handlePublishSuccess(cloneUrl: string) {
+    // Remote was just added; now do the first push with --set-upstream
+    setIsPushing(true);
+    try {
+      const msg = await git.push(repoPath!, true);
+      toast.success(msg || `Pushed to ${cloneUrl}`);
+    } catch (e) {
+      // Might fail if no commits — that's fine
+      const errMsg = String(e);
+      if (!errMsg.includes("nothing to commit") && !errMsg.includes("does not have any commits")) {
+        toast.error(`Push failed: ${errMsg}`);
+      }
+    } finally {
+      setIsPushing(false);
     }
   }
 
@@ -77,6 +109,8 @@ export function ChangesView() {
 
   const [diffFile, setDiffFile] = useState<FileStatus | null>(null);
   const [diffStaged, setDiffStaged] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [isPushing, setIsPushing] = useState(false);
 
   function handleViewDiff(file: FileStatus, staged: boolean) {
     setDiffFile(file);
@@ -102,8 +136,15 @@ export function ChangesView() {
         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handlePull} title="Pull">
           <ArrowDown size={14} />
         </Button>
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handlePush} title="Push">
-          <ArrowUp size={14} />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          onClick={handlePush}
+          disabled={isPushing}
+          title="Push"
+        >
+          {isPushing ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={14} />}
         </Button>
         <Button
           variant="ghost"
@@ -158,6 +199,16 @@ export function ChangesView() {
           staged={diffStaged}
         />
       )}
+
+      <PublishToGitHubDialog
+        open={publishOpen}
+        onOpenChange={(open) => {
+          setPublishOpen(open);
+          if (!open) setIsPushing(false);
+        }}
+        repoPath={repoPath!}
+        onSuccess={handlePublishSuccess}
+      />
     </div>
   );
 }

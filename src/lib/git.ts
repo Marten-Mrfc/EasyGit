@@ -47,6 +47,11 @@ export interface StashInfo {
   hash: string;
 }
 
+export interface RemoteInfo {
+  name: string;
+  url: string;
+}
+
 export const git = {
   version: () =>
     invoke<string>("git_version"),
@@ -86,6 +91,24 @@ export const git = {
 
   fetch: (repoPath: string) =>
     invoke<string>("fetch", { repoPath }),
+
+  getRemotes: (repoPath: string) =>
+    invoke<RemoteInfo[]>("get_remotes", { repoPath }),
+
+  createGithubRepo: (
+    repoPath: string,
+    token: string,
+    name: string,
+    isPrivate: boolean,
+    description?: string
+  ) =>
+    invoke<string>("create_github_repo", {
+      repoPath,
+      token,
+      name,
+      private: isPrivate,
+      description: description ?? null,
+    }),
 
   // Worktree
   listWorktrees: (repoPath: string) =>

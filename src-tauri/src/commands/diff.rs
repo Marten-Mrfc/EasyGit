@@ -31,11 +31,7 @@ fn parse_log_lines(output: &str) -> Vec<CommitInfo> {
                 hash: parts[0].to_string(),
                 short_hash: parts[1].to_string(),
                 author: parts[2].to_string(),
-                date: parts[3]
-                    .split('T')
-                    .next()
-                    .unwrap_or(parts[3])
-                    .to_string(),
+                date: parts[3].split('T').next().unwrap_or(parts[3]).to_string(),
                 message: parts[4].to_string(),
             })
         })
@@ -84,15 +80,19 @@ pub async fn get_diff(
 
 /// Full unified patch for a single commit (all changed files).
 #[tauri::command]
-pub async fn get_commit_diff(
-    repo_path: String,
-    hash: String,
-) -> Result<String, String> {
+pub async fn get_commit_diff(repo_path: String, hash: String) -> Result<String, String> {
     let hash_ref = hash.as_str();
     // --root handles the initial commit (no parent)
     let out = git_run(
         &repo_path,
-        &["diff-tree", "--root", "--no-commit-id", "-p", "-r", hash_ref],
+        &[
+            "diff-tree",
+            "--root",
+            "--no-commit-id",
+            "-p",
+            "-r",
+            hash_ref,
+        ],
     )?;
     if out.success {
         return Ok(out.stdout);
@@ -105,10 +105,7 @@ pub async fn get_commit_diff(
 
 /// Commit log for the whole repo (recent commits).
 #[tauri::command]
-pub async fn get_log(
-    repo_path: String,
-    limit: usize,
-) -> Result<Vec<CommitInfo>, String> {
+pub async fn get_log(repo_path: String, limit: usize) -> Result<Vec<CommitInfo>, String> {
     let limit_str = limit.to_string();
     let out = git_run(
         &repo_path,
@@ -133,14 +130,18 @@ pub async fn get_log(
 
 /// Commit log for a specific file.
 #[tauri::command]
-pub async fn get_file_log(
-    repo_path: String,
-    file_path: String,
-) -> Result<Vec<CommitInfo>, String> {
+pub async fn get_file_log(repo_path: String, file_path: String) -> Result<Vec<CommitInfo>, String> {
     let file_ref = file_path.as_str();
     let out = git_run(
         &repo_path,
-        &["log", "-n50", "--follow", "--format=%H|%h|%an|%ai|%s", "--", file_ref],
+        &[
+            "log",
+            "-n50",
+            "--follow",
+            "--format=%H|%h|%an|%ai|%s",
+            "--",
+            file_ref,
+        ],
     )?;
     if !out.success {
         if out.stderr.contains("does not have any commits")
@@ -155,15 +156,9 @@ pub async fn get_file_log(
 
 /// Blame a file — returns one entry per line using git's porcelain blame format.
 #[tauri::command]
-pub async fn get_blame(
-    repo_path: String,
-    file_path: String,
-) -> Result<Vec<BlameLine>, String> {
+pub async fn get_blame(repo_path: String, file_path: String) -> Result<Vec<BlameLine>, String> {
     let file_ref = file_path.as_str();
-    let out = git_run(
-        &repo_path,
-        &["blame", "--porcelain", file_ref],
-    )?;
+    let out = git_run(&repo_path, &["blame", "--porcelain", file_ref])?;
     if !out.success {
         return Err(out.stderr.trim().to_string());
     }
@@ -174,7 +169,8 @@ fn parse_blame_porcelain(output: &str) -> Vec<BlameLine> {
     let lines = output.lines().peekable();
     let mut result = Vec::new();
     // Track commit metadata we've already seen (hash → (author, date))
-    let mut seen: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();
+    let mut seen: std::collections::HashMap<String, (String, String)> =
+        std::collections::HashMap::new();
     let mut current_hash = String::new();
     let mut current_line_num: u32 = 0;
     let mut current_author = String::new();

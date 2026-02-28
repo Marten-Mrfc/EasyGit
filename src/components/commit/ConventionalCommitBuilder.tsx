@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { GitCommitHorizontal, ChevronDown, ChevronUp, AlertTriangle } from "lucide-react";
+import { useState, useMemo, useEffect } from "react";
+import { GitCommitHorizontal, ChevronDown, ChevronUp, AlertTriangle, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -48,6 +48,7 @@ export function ConventionalCommitBuilder({
   const [body, setBody] = useState("");
   const [bodyOpen, setBodyOpen] = useState(false);
   const [committing, setCommitting] = useState(false);
+  const [amend, setAmend] = useState(false);
 
   const preview = useMemo(() => {
     if (!selectedType || !description.trim()) return "";
@@ -57,14 +58,43 @@ export function ConventionalCommitBuilder({
     return body.trim() ? `${header}\n\n${body.trim()}` : header;
   }, [selectedType, scope, breaking, description, body]);
 
-  const canCommit = hasStaged && selectedType !== null && description.trim().length > 0 && !committing;
+  const canCommit = (hasStaged || amend) && selectedType !== null && description.trim().length > 0 && !committing;
+
+  // When amend is toggled on, pre-fill the form with the last commit message
+  useEffect(() => {
+    if (!amend) return;
+    git.getLastCommitMessage(repoPath).then((msg) => {
+      // Try to parse the conventional commit format
+      const match = msg.match(/^(\w+)(?:\(([^)]+)\))?(!)?: (.+?)(?:\n\n([\s\S]*))?$/);
+      if (match) {
+        const [, type, scopeVal, breakingMark, desc, bodyVal] = match;
+        const knownType = COMMIT_TYPES.find((ct) => ct.value === type);
+        if (knownType) setSelectedType(knownType.value);
+        if (scopeVal) setScope(scopeVal);
+        setBreaking(breakingMark === "!");
+        setDescription(desc ?? "");
+        if (bodyVal?.trim()) { setBody(bodyVal.trim()); setBodyOpen(true); }
+      } else {
+        // Non-conventional message — put it all in description
+        setDescription(msg.split("\n")[0] ?? "");
+        const rest = msg.split("\n").slice(2).join("\n").trim();
+        if (rest) { setBody(rest); setBodyOpen(true); }
+      }
+    }).catch(() => { /* no commits yet */ });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [amend]);
 
   async function handleCommit() {
     if (!canCommit) return;
     setCommitting(true);
     try {
-      await git.commit(repoPath, preview);
-      toast.success("Committed successfully");
+      if (amend) {
+        await git.amendCommit(repoPath, preview);
+        toast.success("Commit amended");
+      } else {
+        await git.commit(repoPath, preview);
+        toast.success("Committed successfully");
+      }
       // reset form
       setSelectedType(null);
       setScope("");
@@ -72,6 +102,7 @@ export function ConventionalCommitBuilder({
       setDescription("");
       setBody("");
       setBodyOpen(false);
+      setAmend(false);
       onCommitSuccess();
     } catch (e) {
       toast.error(`Commit failed: ${String(e)}`);
@@ -136,16 +167,28 @@ export function ConventionalCommitBuilder({
 
       {/* Description */}
       <div className="space-y-1.5">
-        <Label htmlFor="commit-desc" className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">
-          Description
-        </Label>
+        <div className="flex items-center justify-between">
+          <Label htmlFor="commit-desc" className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">
+            Description
+          </Label>
+          <span className={cn(
+            "text-[10px] tabular-nums",
+            description.length > 72 ? "text-red-400" :
+            description.length > 50 ? "text-amber-400" :
+            "text-muted-foreground/50"
+          )}>
+            {description.length}/72
+          </span>
+        </div>
         <Input
           id="commit-desc"
           placeholder="Short description…"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && canCommit) handleCommit(); }}
-          className="h-8 text-sm"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey && canCommit) handleCommit();
+          }}
+          className={cn("h-8 text-sm", description.length > 72 && "border-red-500/50 focus-visible:ring-red-500/30")}
         />
       </div>
 
@@ -162,6 +205,9 @@ export function ConventionalCommitBuilder({
             placeholder="Additional context, motivation, or migration notes…"
             value={body}
             onChange={(e) => setBody(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && canCommit) handleCommit();
+            }}
             rows={3}
             className="text-sm resize-none font-mono"
           />
@@ -178,8 +224,21 @@ export function ConventionalCommitBuilder({
         </div>
       )}
 
+      {/* Amend toggle */}
+      <div className="flex items-center gap-3">
+        <Switch
+          id="amend"
+          checked={amend}
+          onCheckedChange={setAmend}
+        />
+        <Label htmlFor="amend" className="flex items-center gap-1.5 cursor-pointer text-sm">
+          <Pencil size={13} className={cn("transition-colors", amend ? "text-amber-400" : "text-muted-foreground")} />
+          Amend last commit
+        </Label>
+      </div>
+
       {/* Hints */}
-      {!hasStaged && (
+      {!hasStaged && !amend && (
         <div className="flex items-center gap-2 text-xs text-amber-400 rounded-md bg-amber-500/10 border border-amber-500/20 px-3 py-2">
           <AlertTriangle size={13} />
           Stage at least one file to commit.
@@ -187,20 +246,24 @@ export function ConventionalCommitBuilder({
       )}
 
       {/* Commit button */}
-      <div className="mt-auto pt-2">
+      <div className="mt-auto pt-2 space-y-1.5">
         <Button
           className="w-full gap-2"
           disabled={!canCommit}
           onClick={handleCommit}
         >
           <GitCommitHorizontal size={16} />
-          {committing ? "Committing…" : "Commit"}
+          {committing ? (amend ? "Amending…" : "Committing…") : (amend ? "Amend Commit" : "Commit")}
           {canCommit && (
             <Badge variant="secondary" className="ml-auto font-mono text-[10px] h-5 px-1.5">
               {selectedType}
             </Badge>
           )}
         </Button>
+        <p className="text-center text-[10px] text-muted-foreground/50">
+          Press <kbd className="font-mono bg-muted px-1 py-0.5 rounded text-[9px]">Enter</kbd> or{" "}
+          <kbd className="font-mono bg-muted px-1 py-0.5 rounded text-[9px]">Ctrl+Enter</kbd> to commit
+        </p>
       </div>
     </div>
   );

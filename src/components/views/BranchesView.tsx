@@ -9,6 +9,7 @@ import {
   Trash2,
   Loader2,
   Check,
+  Copy,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -312,6 +313,18 @@ export function BranchesView() {
 
                 {/* Actions — shown on hover */}
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                    title="Copy branch name"
+                    onClick={() => {
+                      navigator.clipboard.writeText(branch.name);
+                      toast.success("Branch name copied");
+                    }}
+                  >
+                    <Copy size={12} />
+                  </Button>
                   {!branch.current && (
                     <Button
                       variant="ghost"

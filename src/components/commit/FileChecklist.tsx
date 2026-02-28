@@ -1,11 +1,22 @@
 import { useState } from "react";
-import { CheckSquare, Square, MinusSquare, Eye } from "lucide-react";
+import { CheckSquare, Square, MinusSquare, Eye, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { git, type FileStatus } from "@/lib/git";
 
 interface FileChecklistProps {
@@ -60,6 +71,19 @@ function FileRow({
     }
   }
 
+  async function discard() {
+    setBusy(true);
+    try {
+      await git.discardFileChanges(repoPath, [file.path], file.unstaged_status === "?");
+      await onRefresh();
+      toast.success(`Discarded changes in ${file.path}`);
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const Icon = type === "staged" ? CheckSquare : Square;
 
   return (
@@ -86,16 +110,51 @@ function FileRow({
       <span className="text-xs text-foreground truncate flex-1 font-mono">
         {file.path}
       </span>
-      {onViewDiff && (
-        <button
-          className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground p-0.5 rounded"
-          onClick={(e) => { e.stopPropagation(); onViewDiff(file, type === "staged"); }}
-          title="View diff"
-          aria-label="View diff"
-        >
-          <Eye size={12} />
-        </button>
-      )}
+      <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+        {onViewDiff && (
+          <button
+            className="text-muted-foreground hover:text-foreground p-0.5 rounded"
+            onClick={(e) => { e.stopPropagation(); onViewDiff(file, type === "staged"); }}
+            title="View diff"
+            aria-label="View diff"
+          >
+            <Eye size={12} />
+          </button>
+        )}
+        {type === "unstaged" && (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <button
+                className="text-muted-foreground hover:text-destructive p-0.5 rounded"
+                onClick={(e) => e.stopPropagation()}
+                title="Discard changes"
+                aria-label="Discard changes"
+              >
+                <Undo2 size={12} />
+              </button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Discard changes?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Discard all changes in{" "}
+                  <span className="font-mono font-medium">{file.path}</span>?{" "}
+                  This cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={discard}
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                >
+                  Discard
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
+      </div>
     </div>
   );
 }

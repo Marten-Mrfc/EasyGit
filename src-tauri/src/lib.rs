@@ -6,7 +6,10 @@ use commands::{
     git::git_version,
     oauth::{github_poll_device_token, github_start_device_flow},
     remote::{create_github_repo, fetch, get_remotes, pull, push},
-    repo::{clone_repo, commit, get_current_branch, get_status, stage_files, unstage_files},
+    repo::{
+        amend_commit, clone_repo, commit, discard_file_changes, get_current_branch,
+        get_last_commit_message, get_status, stage_files, unstage_files,
+    },
     stash::{list_stashes, stash_apply, stash_drop, stash_pop, stash_push},
     tags::{
         create_github_release, create_tag, delete_remote_tag, delete_tag,
@@ -63,6 +66,9 @@ pub fn run() {
             get_commits_since_tag,
             generate_github_release_notes,
             create_github_release,
+            discard_file_changes,
+            amend_commit,
+            get_last_commit_message,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -132,11 +132,7 @@ pub fn get_current_branch(repo_path: String) -> Result<String, String> {
 /// Clone a remote repository to `dest_path`, emitting `clone-progress` events
 /// for each line of git's stderr output as it arrives.
 #[tauri::command]
-pub fn clone_repo(
-    app: tauri::AppHandle,
-    url: String,
-    dest_path: String,
-) -> Result<String, String> {
+pub fn clone_repo(app: tauri::AppHandle, url: String, dest_path: String) -> Result<String, String> {
     let dest = dest_path.clone();
 
     let mut child = std::process::Command::new("git")
@@ -184,5 +180,52 @@ pub fn clone_repo(
         } else {
             last_line
         })
+    }
+}
+
+/// Discard unstaged working-tree changes for specific paths.
+/// For untracked files (`?`) use `git clean -f`; for tracked files use `git restore`.
+#[tauri::command]
+pub fn discard_file_changes(
+    repo_path: String,
+    paths: Vec<String>,
+    is_untracked: bool,
+) -> Result<(), String> {
+    let path_refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+    let out = if is_untracked {
+        let mut args = vec!["clean", "-f", "--"];
+        args.extend_from_slice(&path_refs);
+        git_run(&repo_path, &args)?
+    } else {
+        let mut args = vec!["restore", "--"];
+        args.extend_from_slice(&path_refs);
+        git_run(&repo_path, &args)?
+    };
+    if out.success {
+        Ok(())
+    } else {
+        Err(out.stderr)
+    }
+}
+
+/// Amend the most recent commit with a new message (and whatever is staged).
+#[tauri::command]
+pub fn amend_commit(repo_path: String, message: String) -> Result<String, String> {
+    let out = git_run(&repo_path, &["commit", "--amend", "-m", &message])?;
+    if out.success {
+        Ok(out.stdout.trim().to_string())
+    } else {
+        Err(out.stderr)
+    }
+}
+
+/// Return the full message of the most recent commit (subject + body).
+#[tauri::command]
+pub fn get_last_commit_message(repo_path: String) -> Result<String, String> {
+    let out = git_run(&repo_path, &["log", "-1", "--pretty=%B"])?;
+    if out.success {
+        Ok(out.stdout.trim().to_string())
+    } else {
+        Err(out.stderr)
     }
 }

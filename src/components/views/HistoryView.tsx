@@ -15,6 +15,20 @@ import { DiffViewer } from "@/components/diff/DiffViewer";
 import { useRepoStore } from "@/store/repoStore";
 import { git, type CommitInfo } from "@/lib/git";
 
+function toRelativeTime(dateStr: string): string {
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return dateStr;
+  const diff = Date.now() - date.getTime();
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s < 604800) return `${Math.floor(s / 86400)}d ago`;
+  if (s < 2592000) return `${Math.floor(s / 604800)}w ago`;
+  if (s < 31536000) return `${Math.floor(s / 2592000)}mo ago`;
+  return `${Math.floor(s / 31536000)}y ago`;
+}
+
 export function HistoryView() {
   const { repoPath } = useRepoStore();
   const [commits, setCommits] = useState<CommitInfo[]>([]);
@@ -124,7 +138,7 @@ export function HistoryView() {
                     </span>
                     <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                       <Calendar size={10} />
-                      {c.date}
+                      <span title={c.date}>{toRelativeTime(c.date)}</span>
                     </span>
                   </div>
                 </div>

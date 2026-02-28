@@ -72,8 +72,17 @@ export const git = {
   unstageFiles: (repoPath: string, paths: string[]) =>
     invoke<void>("unstage_files", { repoPath, paths }),
 
+  discardFileChanges: (repoPath: string, paths: string[], isUntracked: boolean) =>
+    invoke<void>("discard_file_changes", { repoPath, paths, isUntracked }),
+
   commit: (repoPath: string, message: string) =>
     invoke<string>("commit", { repoPath, message }),
+
+  amendCommit: (repoPath: string, message: string) =>
+    invoke<string>("amend_commit", { repoPath, message }),
+
+  getLastCommitMessage: (repoPath: string) =>
+    invoke<string>("get_last_commit_message", { repoPath }),
 
   getCurrentBranch: (repoPath: string) =>
     invoke<string>("get_current_branch", { repoPath }),

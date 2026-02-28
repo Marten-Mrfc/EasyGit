@@ -35,4 +35,46 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+  build: {
+    // Raise the warning threshold — after splitting, individual chunks will be
+    // well below 500 kB; warn only for genuinely oversized chunks.
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        // Split node_modules into focused vendor chunks so:
+        //  • the browser can parse them in parallel
+        //  • vendor code is cached separately from app code across rebuilds
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return;
+
+          // React runtime — tiny but loaded by everything, keep isolated
+          if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) {
+            return 'vendor-react';
+          }
+          // Radix UI primitives
+          if (id.includes('radix-ui') || id.includes('@radix-ui')) {
+            return 'vendor-radix';
+          }
+          // Icon library (large — many SVG paths)
+          if (id.includes('lucide-react')) {
+            return 'vendor-lucide';
+          }
+          // Diff rendering (highlight.js + diff2html)
+          if (id.includes('diff2html') || id.includes('highlight.js')) {
+            return 'vendor-diff';
+          }
+          // Tauri JS bridge
+          if (id.includes('@tauri-apps')) {
+            return 'vendor-tauri';
+          }
+          // TanStack Query
+          if (id.includes('@tanstack')) {
+            return 'vendor-query';
+          }
+          // Everything else in node_modules (cmdk, sonner, zustand, etc.)
+          // — let Rollup auto-chunk these to avoid circular chunk warnings.
+        },
+      },
+    },
+  },
 }));

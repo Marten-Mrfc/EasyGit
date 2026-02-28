@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -10,6 +11,13 @@ jobs:
   check:
     name: Check (frontend + Rust)
     runs-on: windows-latest
+    env:
+      # Incremental compilation is a net negative in CI: it adds IO overhead
+      # and the cache is always cold relative to the previous dev build.
+      CARGO_INCREMENTAL: "0"
+      # Drop full DWARF debug info – speeds up compilation and reduces
+      # artifact size, which improves Swatinem/rust-cache restore times.
+      RUSTFLAGS: "-Cdebuginfo=0"
 
     steps:
       - name: Checkout
@@ -17,6 +25,10 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          # lld-link is included in llvm-tools and is significantly faster
+          # than the default MSVC link.exe on Windows CI runners.
+          components: llvm-tools-preview
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -32,10 +44,8 @@ jobs:
       - name: Type-check & build frontend
         run: bun run build
 
-      - name: Cargo check
-        working-directory: src-tauri
-        run: cargo check
-
       - name: Cargo clippy
         working-directory: src-tauri
+        # clippy runs a full check pass internally – no need for a separate
+        # `cargo check` step which would compile everything twice.
         run: cargo clippy -- -D warnings

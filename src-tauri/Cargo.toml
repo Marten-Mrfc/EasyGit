@@ -24,7 +24,27 @@ tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
-reqwest = { version = "0.12", features = ["json"] }
+# native-tls uses Windows SChannel — zero extra compile cost on Windows.
+# http2 is intentionally excluded (only used for simple GitHub API calls).
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# ── Build Profiles ────────────────────────────────────────────────────────────
+
+[profile.dev]
+incremental = true  # Compile in smaller steps → fast recompiles
+debug = 1           # Line-number tables only (not full DWARF) → faster linking
+
+[profile.dev.build-override]
+# Proc-macros and build scripts run many times during compilation.
+# Compiling them optimized makes subsequent compilations faster.
+opt-level = 3
+
+[profile.release]
+codegen-units = 1  # Single CGU → better LLVM optimizations
+lto = true         # Link-time optimization → smaller + faster binary
+opt-level = "s"    # Optimize for size (use "3" if you prefer max speed)
+panic = "abort"    # Remove panic-unwinding machinery
+strip = true       # Strip debug symbols from release binary
 

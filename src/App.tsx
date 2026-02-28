@@ -1,19 +1,25 @@
 import "./App.css";
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
+// OpenRepoView and PlaceholderView are lightweight — keep them eager so the
+// initial blank-repo screen appears without any loading flash.
 import { OpenRepoView } from "@/components/views/OpenRepoView";
-import { ChangesView } from "@/components/views/ChangesView";
-import { BranchesView } from "@/components/views/BranchesView";
-import { WorktreeView } from "@/components/views/WorktreeView";
-import { StashView } from "@/components/views/StashView";
-import { HistoryView } from "@/components/views/HistoryView";
-import { SettingsView } from "@/components/views/SettingsView";
-import { ReleasesView } from "@/components/views/ReleasesView";
 import { PlaceholderView } from "@/components/views/PlaceholderView";
+import { Spinner } from "@/components/ui/spinner";
 import { useRepoStore } from "@/store/repoStore";
 import { useAuthStore } from "@/store/authStore";
 import type { View } from "@/components/layout/Sidebar";
+
+// Lazy-load heavier views so their JS (and vendor chunks like diff2html) is
+// only parsed when the user actually navigates to that section.
+const ChangesView  = lazy(() => import("@/components/views/ChangesView").then(m => ({ default: m.ChangesView })));
+const BranchesView = lazy(() => import("@/components/views/BranchesView").then(m => ({ default: m.BranchesView })));
+const WorktreeView = lazy(() => import("@/components/views/WorktreeView").then(m => ({ default: m.WorktreeView })));
+const StashView    = lazy(() => import("@/components/views/StashView").then(m => ({ default: m.StashView })));
+const HistoryView  = lazy(() => import("@/components/views/HistoryView").then(m => ({ default: m.HistoryView })));
+const SettingsView = lazy(() => import("@/components/views/SettingsView").then(m => ({ default: m.SettingsView })));
+const ReleasesView = lazy(() => import("@/components/views/ReleasesView").then(m => ({ default: m.ReleasesView })));
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -49,7 +55,11 @@ function AppContent() {
 
   return (
     <AppShell>
-      {(view) => <ViewRouter view={view} />}
+      {(view) => (
+        <Suspense fallback={<div className="flex h-full items-center justify-center"><Spinner /></div>}>
+          <ViewRouter view={view} />
+        </Suspense>
+      )}
     </AppShell>
   );
 }

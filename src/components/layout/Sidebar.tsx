@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   ListTree,
   Settings,
+  Tag,
   X,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -35,6 +36,7 @@ export type View =
   | "worktree"
   | "history"
   | "stash"
+  | "releases"
   | "settings";
 
 interface NavItem {
@@ -49,6 +51,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "worktree", label: "Worktree", icon: LayoutDashboard },
   { id: "history",  label: "History",  icon: History },
   { id: "stash",    label: "Stash",    icon: Archive },
+  { id: "releases", label: "Releases", icon: Tag },
 ];
 
 interface SidebarProps {

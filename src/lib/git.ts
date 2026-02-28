@@ -52,6 +52,13 @@ export interface RemoteInfo {
   url: string;
 }
 
+export interface TagInfo {
+  name: string;
+  commit_hash: string;
+  date: string;
+  message: string | null;
+}
+
 export const git = {
   version: () =>
     invoke<string>("git_version"),
@@ -148,4 +155,44 @@ export const git = {
 
   stashDrop: (repoPath: string, index: number) =>
     invoke<string>("stash_drop", { repoPath, index }),
+
+  // Tags & Releases
+  listTags: (repoPath: string) =>
+    invoke<TagInfo[]>("list_tags", { repoPath }),
+
+  createTag: (repoPath: string, name: string, message: string) =>
+    invoke<string>("create_tag", { repoPath, name, message }),
+
+  deleteTag: (repoPath: string, name: string) =>
+    invoke<string>("delete_tag", { repoPath, name }),
+
+  pushTag: (repoPath: string, tagName: string) =>
+    invoke<string>("push_tag", { repoPath, tagName }),
+
+  deleteRemoteTag: (repoPath: string, tagName: string) =>
+    invoke<string>("delete_remote_tag", { repoPath, tagName }),
+
+  getCommitsSinceTag: (repoPath: string, tag?: string) =>
+    invoke<string[]>("get_commits_since_tag", { repoPath, tag: tag ?? null }),
+
+  createGithubRelease: (
+    token: string,
+    owner: string,
+    repo: string,
+    tagName: string,
+    name: string,
+    body: string,
+    prerelease: boolean,
+    draft: boolean
+  ) =>
+    invoke<string>("create_github_release", {
+      token,
+      owner,
+      repo,
+      tagName,
+      name,
+      body,
+      prerelease,
+      draft,
+    }),
 };

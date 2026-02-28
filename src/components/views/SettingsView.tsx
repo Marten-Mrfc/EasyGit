@@ -8,6 +8,9 @@ import {
   Copy,
   ExternalLink,
   Key,
+  RefreshCw,
+  Download,
+  Info,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
@@ -20,6 +23,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { useAuthStore } from "@/store/authStore";
 import { useGitHubUser, useInvalidateGitHubCache } from "@/hooks/useGitHub";
+import { useUpdater } from "@/hooks/useUpdater";
 import {
   GITHUB_CLIENT_ID,
   validateGitHubToken,
@@ -401,6 +405,60 @@ function GitHubReposPreview() {
 }
 
 // ---------------------------------------------------------------------------
+// About & Updates Section
+// ---------------------------------------------------------------------------
+
+function AboutSection() {
+  const { status, update, error, checkForUpdates, installUpdate } =
+    useUpdater();
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Info size={13} />
+          <span>Version 0.1.0</span>
+        </div>
+        {status === "available" && update ? (
+          <Button size="sm" className="h-7 gap-1.5 text-xs" onClick={installUpdate}>
+            <Download size={12} />
+            Install v{update.version}
+          </Button>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1.5 text-xs"
+            onClick={checkForUpdates}
+            disabled={status === "checking" || status === "downloading"}
+          >
+            {status === "checking" || status === "downloading" ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <RefreshCw size={12} />
+            )}
+            {status === "checking"
+              ? "Checking…"
+              : status === "downloading"
+              ? "Installing…"
+              : "Check for updates"}
+          </Button>
+        )}
+      </div>
+      {status === "up-to-date" && (
+        <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+          <CheckCircle2 size={12} className="text-green-500" />
+          You're on the latest version.
+        </p>
+      )}
+      {status === "error" && (
+        <p className="text-xs text-destructive">{error}</p>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main SettingsView
 // ---------------------------------------------------------------------------
 
@@ -449,6 +507,25 @@ export function SettingsView() {
           <p className="text-xs text-muted-foreground">
             Works with both gitlab.com and self-hosted instances. Enter your
             instance URL above.
+          </p>
+        </section>
+
+        <Separator />
+
+        {/* About & Updates */}
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold">About</h2>
+          <div className="rounded-lg border border-border p-4">
+            <AboutSection />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            EasyGit is open source.{" "}
+            <button
+              onClick={() => openUrl("https://github.com/Marten-Mrfc/EasyGit")}
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              View on GitHub
+            </button>
           </p>
         </section>
       </div>

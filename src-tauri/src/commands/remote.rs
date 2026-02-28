@@ -22,11 +22,7 @@ pub fn get_remotes(repo_path: String) -> Result<Vec<RemoteInfo>, String> {
             let name = parts.next()?.trim().to_string();
             let rest = parts.next().unwrap_or("");
             // rest = "<url> (fetch)" or "<url> (push)"
-            let url = rest
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .to_string();
+            let url = rest.split_whitespace().next().unwrap_or("").to_string();
             if seen.insert(name.clone()) {
                 Some(RemoteInfo { name, url })
             } else {

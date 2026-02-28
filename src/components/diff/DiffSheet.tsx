@@ -137,7 +137,7 @@ export function DiffSheet({ open, onOpenChange, repoPath, filePath, staged }: Di
                             <td className="px-2 py-0.5 text-blue-400/70 whitespace-nowrap w-20 shrink-0">
                               {bl.hash}
                             </td>
-                            <td className="px-2 py-0.5 text-muted-foreground whitespace-nowrap w-28 shrink-0 truncate max-w-[7rem]">
+                            <td className="px-2 py-0.5 text-muted-foreground whitespace-nowrap w-28 shrink-0 truncate max-w-28">
                               {bl.author}
                             </td>
                             <td className="px-2 py-0.5 text-muted-foreground/60 whitespace-nowrap w-24 shrink-0">

@@ -9,6 +9,7 @@ import { WorktreeView } from "@/components/views/WorktreeView";
 import { StashView } from "@/components/views/StashView";
 import { HistoryView } from "@/components/views/HistoryView";
 import { SettingsView } from "@/components/views/SettingsView";
+import { ReleasesView } from "@/components/views/ReleasesView";
 import { PlaceholderView } from "@/components/views/PlaceholderView";
 import { useRepoStore } from "@/store/repoStore";
 import { useAuthStore } from "@/store/authStore";
@@ -35,6 +36,8 @@ function ViewRouter({ view }: { view: View }) {
       return <HistoryView />;
     case "stash":
       return <StashView />;
+    case "releases":
+      return <ReleasesView />;
     default:
       return <PlaceholderView name={view} />;
   }

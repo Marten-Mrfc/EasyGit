@@ -23,15 +23,14 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
-        with:
-          # lld-link is included in llvm-tools and is significantly faster
-          # than the default MSVC link.exe on Windows CI runners.
-          components: llvm-tools-preview
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # Save cache even on failure so the next run (e.g. after a clippy
+          # fix) gets a warm cache instead of re-downloading everything.
+          cache-on-failure: true
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2

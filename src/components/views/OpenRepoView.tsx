@@ -1,7 +1,9 @@
-import { FolderOpen, GitBranch, Clock, X } from "lucide-react";
+import { useState } from "react";
+import { Download, FolderOpen, GitBranch, Clock, X } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { CloneDialog } from "./CloneDialog";
 import {
   Card,
   CardContent,
@@ -15,6 +17,7 @@ import { useRepoStore } from "@/store/repoStore";
 
 export function OpenRepoView() {
   const { setRepoPath, recentRepos, removeRecentRepo } = useRepoStore();
+  const [cloneOpen, setCloneOpen] = useState(false);
 
   async function pickFolder() {
     try {
@@ -56,7 +59,16 @@ export function OpenRepoView() {
             <FolderOpen size={18} />
             Browse for Folder
           </Button>
+          <Button size="lg" variant="outline" className="w-full gap-2" onClick={() => setCloneOpen(true)}>
+            <Download size={18} />
+            Clone a Repository
+          </Button>
         </CardContent>
+        <CloneDialog
+          open={cloneOpen}
+          onOpenChange={setCloneOpen}
+          onCloned={(p) => setRepoPath(p)}
+        />
       </Card>
 
       {/* Recent repos */}

@@ -213,4 +213,8 @@ export const git = {
       prerelease,
       draft,
     }),
+
+  // Clone
+  cloneRepo: (url: string, destPath: string) =>
+    invoke<string>("clone_repo", { url, destPath }),
 };

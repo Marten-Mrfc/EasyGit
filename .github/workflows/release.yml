@@ -64,7 +64,7 @@ jobs:
         run: bun install
 
       - name: Build & publish Tauri app
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -82,5 +82,5 @@ jobs:
             Existing installs will be notified automatically via **Settings → About**.
           releaseDraft: false
           prerelease: false
-          includeUpdaterJson: true
-          updatesExistingRelease: true
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true

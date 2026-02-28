@@ -9,8 +9,8 @@ use commands::{
     repo::{commit, get_current_branch, get_status, stage_files, unstage_files},
     stash::{list_stashes, stash_apply, stash_drop, stash_pop, stash_push},
     tags::{
-        create_github_release, create_tag, delete_remote_tag, delete_tag, get_commits_since_tag,
-        list_tags, push_tag,
+        create_github_release, create_tag, delete_remote_tag, delete_tag,
+        generate_github_release_notes, get_commits_since_tag, list_tags, push_tag,
     },
     worktree::{add_worktree, list_worktrees, remove_worktree},
 };
@@ -59,6 +59,7 @@ pub fn run() {
             push_tag,
             delete_remote_tag,
             get_commits_since_tag,
+            generate_github_release_notes,
             create_github_release,
         ])
         .run(tauri::generate_context!())

@@ -11,7 +11,11 @@ import {
   RefreshCw,
   Download,
   Info,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
+import { getVersion } from "@tauri-apps/api/app";
+import { Progress } from "@/components/ui/progress";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -409,15 +413,23 @@ function GitHubReposPreview() {
 // ---------------------------------------------------------------------------
 
 function AboutSection() {
-  const { status, update, error, checkForUpdates, installUpdate } =
+  const { status, update, error, downloadProgress, checkForUpdates, installUpdate } =
     useUpdater();
+  const [version, setVersion] = useState<string>("…");
+  const [notesOpen, setNotesOpen] = useState(false);
+
+  useEffect(() => {
+    getVersion().then(setVersion).catch(() => setVersion("0.1.0"));
+  }, []);
+
+  const isDownloading = status === "downloading";
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Info size={13} />
-          <span>Version 0.1.0</span>
+          <span>Version {version}</span>
         </div>
         {status === "available" && update ? (
           <Button size="sm" className="h-7 gap-1.5 text-xs" onClick={installUpdate}>
@@ -430,25 +442,72 @@ function AboutSection() {
             size="sm"
             className="h-7 gap-1.5 text-xs"
             onClick={checkForUpdates}
-            disabled={status === "checking" || status === "downloading"}
+            disabled={status === "checking" || isDownloading}
           >
-            {status === "checking" || status === "downloading" ? (
+            {status === "checking" || isDownloading ? (
               <Loader2 size={12} className="animate-spin" />
             ) : (
               <RefreshCw size={12} />
             )}
             {status === "checking"
               ? "Checking…"
-              : status === "downloading"
-              ? "Installing…"
+              : isDownloading
+              ? `Downloading… ${downloadProgress ?? 0}%`
               : "Check for updates"}
           </Button>
         )}
       </div>
+
+      {/* Download progress bar */}
+      {isDownloading && downloadProgress !== null && (
+        <Progress value={downloadProgress} className="h-1" />
+      )}
+
+      {/* Update available: show version badge + release notes toggle */}
+      {status === "available" && update && (
+        <div className="rounded-md bg-primary/5 border border-primary/20 px-3 py-2 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium">
+              v{update.version} available
+              {update.date ? (
+                <span className="text-muted-foreground font-normal">
+                  {" "}&mdash;{" "}
+                  {new Date(update.date).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </span>
+              ) : null}
+            </p>
+            {update.body && (
+              <button
+                onClick={() => setNotesOpen((o) => !o)}
+                className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {notesOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                {notesOpen ? "Hide" : "What's new"}
+              </button>
+            )}
+          </div>
+          {notesOpen && update.body && (
+            <pre className="text-[11px] text-muted-foreground whitespace-pre-wrap font-mono max-h-48 overflow-y-auto leading-relaxed">
+              {update.body}
+            </pre>
+          )}
+        </div>
+      )}
+
       {status === "up-to-date" && (
         <p className="text-xs text-muted-foreground flex items-center gap-1.5">
           <CheckCircle2 size={12} className="text-green-500" />
           You're on the latest version.
+        </p>
+      )}
+      {status === "no-releases" && (
+        <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+          <Info size={12} />
+          No releases published yet.
         </p>
       )}
       {status === "error" && (

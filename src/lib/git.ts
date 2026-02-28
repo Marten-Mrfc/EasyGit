@@ -175,6 +175,21 @@ export const git = {
   getCommitsSinceTag: (repoPath: string, tag?: string) =>
     invoke<string[]>("get_commits_since_tag", { repoPath, tag: tag ?? null }),
 
+  generateGithubReleaseNotes: (
+    token: string,
+    owner: string,
+    repo: string,
+    tagName: string,
+    previousTagName?: string
+  ) =>
+    invoke<string>("generate_github_release_notes", {
+      token,
+      owner,
+      repo,
+      tagName,
+      previousTagName: previousTagName ?? null,
+    }),
+
   createGithubRelease: (
     token: string,
     owner: string,

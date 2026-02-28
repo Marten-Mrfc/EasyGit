@@ -150,11 +150,31 @@ function CreateReleaseDialog({
   async function handleGenerateNotes() {
     setGenerating(true);
     try {
-      const commits = await git.getCommitsSinceTag(repoPath, latestTag);
-      const generated = formatReleaseNotes(commits);
-      setNotes(generated || "No changes since last tag.");
-    } catch (e) {
-      toast.error(String(e));
+      if (githubToken && githubRemote) {
+        // Use GitHub's native release-notes generator for richer output
+        const generated = await git.generateGithubReleaseNotes(
+          githubToken,
+          githubRemote.owner,
+          githubRemote.repo,
+          tagName,
+          latestTag,
+        );
+        setNotes(generated || "No changes since last tag.");
+      } else {
+        // Fallback: build notes from local commit log
+        const commits = await git.getCommitsSinceTag(repoPath, latestTag);
+        const generated = formatReleaseNotes(commits);
+        setNotes(generated || "No changes since last tag.");
+      }
+    } catch {
+      // If GitHub API fails, fall back to local parsing
+      try {
+        const commits = await git.getCommitsSinceTag(repoPath, latestTag);
+        const generated = formatReleaseNotes(commits);
+        setNotes(generated || "No changes since last tag.");
+      } catch (inner) {
+        toast.error(String(inner));
+      }
     } finally {
       setGenerating(false);
     }
@@ -296,7 +316,7 @@ function CreateReleaseDialog({
                 ) : (
                   <Sparkles size={11} />
                 )}
-                Generate from commits
+                {githubToken && githubRemote ? "Generate via GitHub" : "Generate from commits"}
               </Button>
             </div>
             <textarea

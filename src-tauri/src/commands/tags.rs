@@ -38,7 +38,12 @@ pub fn list_tags(repo_path: String) -> Result<Vec<TagInfo>, String> {
             } else {
                 Some(message_raw)
             };
-            TagInfo { name, commit_hash, date, message }
+            TagInfo {
+                name,
+                commit_hash,
+                date,
+                message,
+            }
         })
         .collect();
 
@@ -47,11 +52,7 @@ pub fn list_tags(repo_path: String) -> Result<Vec<TagInfo>, String> {
 
 /// Create an annotated local tag.
 #[tauri::command]
-pub fn create_tag(
-    repo_path: String,
-    name: String,
-    message: String,
-) -> Result<String, String> {
+pub fn create_tag(repo_path: String, name: String, message: String) -> Result<String, String> {
     git_run(&repo_path, &["tag", "-a", &name, "-m", &message])?;
     Ok(format!("Tag '{}' created", name))
 }
@@ -72,10 +73,7 @@ pub fn push_tag(repo_path: String, tag_name: String) -> Result<String, String> {
 
 /// Delete a tag from the remote.
 #[tauri::command]
-pub fn delete_remote_tag(
-    repo_path: String,
-    tag_name: String,
-) -> Result<String, String> {
+pub fn delete_remote_tag(repo_path: String, tag_name: String) -> Result<String, String> {
     git_run(&repo_path, &["push", "origin", "--delete", &tag_name])?;
     Ok(format!("Remote tag '{}' deleted", tag_name))
 }
@@ -121,6 +119,50 @@ pub fn get_commits_since_tag(
             }
         }
     }
+}
+
+/// Use GitHub's native release-notes generator.
+/// Returns the generated markdown body.
+#[tauri::command]
+pub async fn generate_github_release_notes(
+    token: String,
+    owner: String,
+    repo: String,
+    tag_name: String,
+    previous_tag_name: Option<String>,
+) -> Result<String, String> {
+    let client = Client::new();
+
+    let mut payload = serde_json::json!({ "tag_name": tag_name });
+    if let Some(prev) = previous_tag_name {
+        payload["previous_tag_name"] = serde_json::Value::String(prev);
+    }
+
+    let resp = client
+        .post(format!(
+            "https://api.github.com/repos/{}/{}/releases/generate-notes",
+            owner, repo
+        ))
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .header(
+            "User-Agent",
+            "EasyGit/0.1.0 (https://github.com/Marten-Mrfc/EasyGit)",
+        )
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("GitHub API error {}: {}", status, text));
+    }
+
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(json["body"].as_str().unwrap_or("").to_string())
 }
 
 /// Create a GitHub Release via the REST API.
@@ -171,10 +213,7 @@ pub async fn create_github_release(
     }
 
     let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    let url = json["html_url"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let url = json["html_url"].as_str().unwrap_or("").to_string();
 
     Ok(url)
 }

@@ -146,7 +146,7 @@ fn parse_blame_porcelain(output: &str) -> Vec<BlameLine> {
     let mut current_author = String::new();
     let mut current_date = String::new();
 
-    while let Some(line) = lines.next() {
+    for line in lines {
         // Header line: "<40-char hash> <orig-line> <final-line> [<num>]"
         if line.len() >= 40 && line.chars().take(40).all(|c| c.is_ascii_hexdigit()) {
             let parts: Vec<&str> = line.splitn(4, ' ').collect();
@@ -187,7 +187,7 @@ fn parse_blame_porcelain(output: &str) -> Vec<BlameLine> {
 /// Very simple epoch → "YYYY-MM-DD" conversion without external crates.
 fn epoch_to_date(epoch: i64) -> String {
     // Days since Unix epoch
-    let days = (epoch / 86400) as i64;
+    let days = epoch / 86400;
     // Use the proleptic Gregorian calendar algorithm
     let z = days + 719468;
     let era = z.div_euclid(146097);

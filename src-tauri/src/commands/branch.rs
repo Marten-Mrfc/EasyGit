@@ -28,7 +28,7 @@ pub fn get_branches(repo_path: String) -> Result<Vec<BranchInfo>, String> {
         .filter(|l| !l.is_empty())
         .map(|line| {
             let parts: Vec<&str> = line.splitn(3, '|').collect();
-            let current = parts.first().map_or(false, |s| *s == "*");
+            let current = parts.first().is_some_and(|s| *s == "*");
             let name = parts.get(1).unwrap_or(&"").to_string();
             let upstream = parts
                 .get(2)

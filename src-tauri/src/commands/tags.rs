@@ -126,6 +126,7 @@ pub fn get_commits_since_tag(
 /// Create a GitHub Release via the REST API.
 /// Returns the HTML URL of the created release.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn create_github_release(
     token: String,
     owner: String,

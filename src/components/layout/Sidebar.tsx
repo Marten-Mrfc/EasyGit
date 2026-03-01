@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Archive,
   ChevronsUpDown,
@@ -24,6 +24,12 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -43,15 +49,16 @@ interface NavItem {
   id: View;
   label: string;
   icon: React.ElementType;
+  group: "repository" | "development";
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: "changes",  label: "Changes",  icon: ListTree },
-  { id: "branches", label: "Branches", icon: GitBranch },
-  { id: "worktree", label: "Worktree", icon: LayoutDashboard },
-  { id: "history",  label: "History",  icon: History },
-  { id: "stash",    label: "Stash",    icon: Archive },
-  { id: "releases", label: "Releases", icon: Tag },
+  { id: "changes",  label: "Changes",  icon: ListTree,        group: "development" },
+  { id: "branches", label: "Branches", icon: GitBranch,       group: "repository" },
+  { id: "worktree", label: "Worktree", icon: LayoutDashboard, group: "repository" },
+  { id: "history",  label: "History",  icon: History,         group: "development" },
+  { id: "stash",    label: "Stash",    icon: Archive,         group: "development" },
+  { id: "releases", label: "Releases", icon: Tag,             group: "development" },
 ];
 
 interface SidebarProps {
@@ -95,6 +102,18 @@ export function Sidebar({ activeView, onNavigate }: SidebarProps) {
   const { repoPath, worktrees, recentRepos, setRepoPath, clearRepo } =
     useRepoStore();
   const [repoPopoverOpen, setRepoPopoverOpen] = useState(false);
+  
+  // Determine active tab based on current view
+  const activeGroup = NAV_ITEMS.find(item => item.id === activeView)?.group ?? "development";
+  const [selectedGroup, setSelectedGroup] = useState<"repository" | "development">(activeGroup);
+  
+  // Update selected group when active view changes to keep tabs in sync
+  useEffect(() => {
+    const viewGroup = NAV_ITEMS.find(item => item.id === activeView)?.group;
+    if (viewGroup) {
+      setSelectedGroup(viewGroup);
+    }
+  }, [activeView]);
 
   const repoName = repoPath
     ? repoPath.replace(/\\/g, "/").split("/").filter(Boolean).slice(-1)[0] ?? ""
@@ -209,17 +228,53 @@ export function Sidebar({ activeView, onNavigate }: SidebarProps) {
         </Popover>
       ) : null}
 
-      <ScrollArea className="flex-1 py-2">
-        <nav className="flex flex-col gap-0.5 px-2">
-          {NAV_ITEMS.map((item) => (
-            <NavButton
-              key={item.id}
-              item={item}
-              active={activeView === item.id}
-              onNavigate={onNavigate}
-            />
-          ))}
-        </nav>
+      <ScrollArea className="flex-1 overflow-hidden">
+        <Tabs
+          value={selectedGroup}
+          onValueChange={(v) => setSelectedGroup(v as "repository" | "development")}
+          className="flex flex-col h-full"
+        >
+          <TabsList className="w-full rounded-none border-b border-border bg-transparent p-0 h-auto">
+            <TabsTrigger
+              value="repository"
+              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-3 py-2 text-xs font-medium"
+            >
+              Repository
+            </TabsTrigger>
+            <TabsTrigger
+              value="development"
+              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-3 py-2 text-xs font-medium"
+            >
+              Development
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="repository" className="flex-1 overflow-hidden mt-0 border-0 py-2 px-2">
+            <nav className="flex flex-col gap-0.5">
+              {NAV_ITEMS.filter(item => item.group === "repository").map((item) => (
+                <NavButton
+                  key={item.id}
+                  item={item}
+                  active={activeView === item.id}
+                  onNavigate={onNavigate}
+                />
+              ))}
+            </nav>
+          </TabsContent>
+
+          <TabsContent value="development" className="flex-1 overflow-hidden mt-0 border-0 py-2 px-2">
+            <nav className="flex flex-col gap-0.5">
+              {NAV_ITEMS.filter(item => item.group === "development").map((item) => (
+                <NavButton
+                  key={item.id}
+                  item={item}
+                  active={activeView === item.id}
+                  onNavigate={onNavigate}
+                />
+              ))}
+            </nav>
+          </TabsContent>
+        </Tabs>
       </ScrollArea>
 
       <div className="px-2 pb-2">

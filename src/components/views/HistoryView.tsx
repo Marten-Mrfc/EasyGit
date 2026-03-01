@@ -1,5 +1,5 @@
-import { useEffect, useCallback, useState, useMemo } from "react";
-import { History, RefreshCw, Loader2, GitCommitHorizontal, User, Calendar, AlignLeft, Columns2, Copy, Maximize2, Minimize2 } from "lucide-react";
+import { useEffect, useCallback, useState, useMemo, useRef } from "react";
+import { History, RefreshCw, Loader2, GitCommitHorizontal, User, Calendar, AlignLeft, Columns2, Copy, Maximize2, Minimize2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,8 +11,12 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogClose,
 } from "@/components/ui/dialog";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 import { DiffViewer, parseDiff } from "@/components/diff/DiffViewer";
 import { useRepoStore } from "@/store/repoStore";
 import { git, type CommitInfo } from "@/lib/git";
@@ -33,14 +37,19 @@ function toRelativeTime(dateStr: string): string {
 
 export function HistoryView() {
   const { repoPath } = useRepoStore();
+  const fileListRef = useRef<HTMLDivElement>(null);
+
+  // State declarations upfront (React hooks rule)
   const [commits, setCommits] = useState<CommitInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
   const [selectedCommit, setSelectedCommit] = useState<CommitInfo | null>(null);
   const [commitDiff, setCommitDiff] = useState("");
   const [diffLoading, setDiffLoading] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [mode, setMode] = useState<"unified" | "split">("unified");
-  const [expanded, setExpanded] = useState(false);
+  const [fullscreenMode, setFullscreenMode] = useState(false);
+  const [fileListPanelWidth, setFileListPanelWidth] = useState(0);
 
   const refresh = useCallback(async () => {
     if (!repoPath) return;
@@ -62,6 +71,7 @@ export function HistoryView() {
   async function openCommitDiff(c: CommitInfo) {
     setSelectedCommit(c);
     setCommitDiff("");
+    setSelectedFile(null);
     setDiffLoading(true);
     try {
       const diff = await git.getCommitDiff(repoPath!, c.hash);
@@ -73,22 +83,145 @@ export function HistoryView() {
     }
   }
 
-  const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(commitDiff).then(() => toast.success("Diff copied")).catch(() => {});
+  // Parse diff to extract files with stats
+  const diffFiles = useMemo(() => {
+    if (!commitDiff) return [];
+    const files = parseDiff(commitDiff);
+    return files.map((file) => {
+      let additions = 0;
+      let deletions = 0;
+      for (const hunk of file.hunks) {
+        for (const line of hunk.lines) {
+          if (line.type === "added") additions++;
+          if (line.type === "removed") deletions++;
+        }
+      }
+      return {
+        newFile: file.newFile,
+        oldFile: file.oldFile,
+        additions,
+        deletions,
+      };
+    });
   }, [commitDiff]);
+
+  // Close dialog on Escape key
+  useEffect(() => {
+    if (!selectedCommit) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setSelectedCommit(null);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [selectedCommit]);
+
+  // Measure file list panel width for dynamic path shortening
+  useEffect(() => {
+    const element = fileListRef.current;
+    if (!element) return;
+
+    const observer = new ResizeObserver(() => {
+      setFileListPanelWidth(element.clientWidth);
+    });
+
+    observer.observe(element);
+    setFileListPanelWidth(element.clientWidth); // Set initial width
+
+    return () => observer.disconnect();
+  }, []);
+
+  // Auto-select first file when diff loads
+  useEffect(() => {
+    if (diffFiles.length > 0 && selectedFile === null && !diffLoading) {
+      setSelectedFile(diffFiles[0].newFile);
+    }
+  }, [diffFiles, selectedFile, diffLoading]);
+
+  // Get the currently selected file's diff
+  const selectedFileDiff = useMemo(() => {
+    if (!selectedFile || !commitDiff) return "";
+    const files = parseDiff(commitDiff);
+    const file = files.find((f) => f.newFile === selectedFile);
+    if (!file) return "";
+
+    // Reconstruct the diff for just this file
+    const result: string[] = [];
+    result.push(`--- a/${file.oldFile}`);
+    result.push(`+++ b/${file.newFile}`);
+    for (const hunk of file.hunks) {
+      result.push(hunk.header);
+      for (const line of hunk.lines) {
+        if (line.type === "added") {
+          result.push("+" + line.content);
+        } else if (line.type === "removed") {
+          result.push("-" + line.content);
+        } else if (line.type === "context") {
+          result.push(" " + line.content);
+        } else if (line.type === "collapsed-context") {
+          result.push(" // ... " + line.count + " lines of context");
+        }
+      }
+    }
+    return result.join("\n");
+  }, [selectedFile, commitDiff]);
+
+  const stats = useMemo(() => {
+    if (!selectedFileDiff) return { added: 0, removed: 0 };
+    let added = 0;
+    let removed = 0;
+    for (const line of selectedFileDiff.split("\n")) {
+      if (line.startsWith("+") && !line.startsWith("+++")) added++;
+      else if (line.startsWith("-") && !line.startsWith("---")) removed++;
+    }
+    return { added, removed };
+  }, [selectedFileDiff]);
+
+  const handleCopy = useCallback(() => {
+    if (selectedFileDiff) {
+      navigator.clipboard.writeText(selectedFileDiff).then(() => toast.success("Diff copied")).catch(() => {});
+    }
+  }, [selectedFileDiff]);
 
   const toggleMode = useCallback(() => {
     setMode((m) => (m === "unified" ? "split" : "unified"));
   }, []);
 
-  const stats = useMemo(() => {
-    const files = parseDiff(commitDiff);
-    return {
-      files: files.length,
-      added: files.reduce((sum, f) => sum + (f.additions || 0), 0),
-      removed: files.reduce((sum, f) => sum + (f.deletions || 0), 0),
-    };
-  }, [commitDiff]);
+  // Helper function to intelligently shorten file paths based on available width
+  const getDisplayPath = useCallback(
+    (fullPath: string): string => {
+      // Use actual panel width thresholds instead of character estimates
+      // Account for padding (px-2.5 = 10px), gap, and stat badges
+      const effectiveWidth = fileListPanelWidth - 60; // 10px padding left + 10px padding right + 40px for badges/gaps
+
+      if (effectiveWidth < 0) {
+        return fullPath.split("/")[fullPath.split("/").length - 1]; // Just filename
+      }
+
+      // If enough space, show full path
+      if (effectiveWidth > 280) {
+        return fullPath;
+      }
+
+      const parts = fullPath.split("/");
+
+      // Try showing last 3 parts
+      if (effectiveWidth > 180) {
+        return parts.slice(-3).join("/");
+      }
+
+      // Try showing last 2 parts
+      if (effectiveWidth > 100) {
+        return parts.slice(-2).join("/");
+      }
+
+      // Just the filename
+      return parts[parts.length - 1];
+    },
+    [fileListPanelWidth]
+  );
 
   const filtered = commits.filter(
     (c) =>
@@ -102,9 +235,7 @@ export function HistoryView() {
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-background/50 shrink-0">
         <History size={14} className="text-muted-foreground shrink-0" />
-        <span className="text-sm text-muted-foreground flex-1">
-          Commit History
-        </span>
+        <span className="text-sm text-muted-foreground flex-1">Commit History</span>
         <Button
           variant="ghost"
           size="icon"
@@ -128,9 +259,9 @@ export function HistoryView() {
       </div>
 
       {/* Commit list */}
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 overflow-hidden">
         {filtered.length === 0 ? (
-          <div className="flex items-center justify-center h-24 text-sm text-muted-foreground">
+          <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
             {commits.length === 0 ? "No commits found" : "No matches"}
           </div>
         ) : (
@@ -146,10 +277,7 @@ export function HistoryView() {
                   <p className="text-sm text-foreground truncate">{c.message}</p>
                   <div className="flex items-center gap-3 mt-0.5 flex-wrap">
                     <span className="flex items-center gap-1 text-[10px] text-muted-foreground font-mono">
-                      <Badge
-                        variant="outline"
-                        className="h-4 px-1.5 text-[10px] font-mono text-blue-400/80 border-blue-500/30 mr-1"
-                      >
+                      <Badge variant="outline" className="h-4 px-1.5 text-[10px] font-mono text-blue-400/80 border-blue-500/30 mr-1">
                         {c.short_hash}
                       </Badge>
                     </span>
@@ -169,21 +297,27 @@ export function HistoryView() {
         )}
       </ScrollArea>
 
-      {/* Commit diff dialog */}
-      <Dialog open={!!selectedCommit} onOpenChange={(open: boolean) => { if (!open) setSelectedCommit(null); }}>
-        <DialogContent showCloseButton={false} className={`${expanded ? "max-w-[98vw] w-[98vw] h-[98vh]" : "w-[50vw] max-w-[95vw] h-[65vh]"} flex flex-col p-0 gap-0 transition-all duration-200`}>
-          <DialogHeader className="px-4 py-2.5 border-b border-border shrink-0">
-            <DialogTitle className="text-sm font-mono flex items-center gap-2 min-w-0">
-              <GitCommitHorizontal size={14} className="text-muted-foreground shrink-0" />
-              <span className="text-blue-400/80 mr-1 shrink-0">{selectedCommit?.short_hash}</span>
-              <span className="truncate text-foreground flex-1 min-w-0">{selectedCommit?.message}</span>
-              {(stats.added > 0 || stats.removed > 0) && (
-                <span className="flex items-center gap-1 text-[11px] font-mono shrink-0">
-                  <span className="text-green-400">+{stats.added}</span>
-                  <span className="text-red-400">-{stats.removed}</span>
-                </span>
-              )}
-              <div className="flex items-center gap-0.5 shrink-0 ml-2">
+      {/* Modal Dialog with file/diff side-by-side */}
+      <Dialog open={selectedCommit !== null} onOpenChange={(open) => !open && setSelectedCommit(null)}>
+        <DialogContent className={`flex flex-col p-0 [&_button:last-of-type]:hidden ${fullscreenMode ? "max-w-[95vw] h-[95vh] w-full" : "max-w-6xl h-[80vh]"}`}>
+          <DialogHeader className="px-6 py-4 border-b border-border shrink-0">
+            <div className="flex items-center justify-between w-full gap-4">
+              <div className="flex items-center gap-2 min-w-0">
+                <GitCommitHorizontal size={16} className="text-muted-foreground shrink-0" />
+                {selectedCommit && (
+                  <>
+                    <span className="text-blue-400/80 font-mono text-sm shrink-0">{selectedCommit.short_hash}</span>
+                    <DialogTitle className="text-sm truncate flex-1">{selectedCommit.message}</DialogTitle>
+                    {(stats.added > 0 || stats.removed > 0) && (
+                      <span className="flex items-center gap-1 text-[11px] font-mono shrink-0">
+                        <span className="text-green-400">+{stats.added}</span>
+                        <span className="text-red-400">-{stats.removed}</span>
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -220,35 +354,103 @@ export function HistoryView() {
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setExpanded((v) => !v)}>
-                      {expanded ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={() => setFullscreenMode(!fullscreenMode)}
+                    >
+                      {fullscreenMode ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>{expanded ? "Restore size" : "Maximize"}</TooltipContent>
+                  <TooltipContent>{fullscreenMode ? "Exit fullscreen" : "Fullscreen"}</TooltipContent>
                 </Tooltip>
-                <DialogClose asChild>
-                  <Button variant="ghost" size="icon" className="h-6 w-6">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <line x1="18" y1="6" x2="6" y2="18"></line>
-                      <line x1="6" y1="6" x2="18" y2="18"></line>
-                    </svg>
-                  </Button>
-                </DialogClose>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={() => setSelectedCommit(null)}
+                >
+                  <X size={12} />
+                </Button>
               </div>
-            </DialogTitle>
+            </div>
             {selectedCommit && (
-              <p className="text-xs text-muted-foreground font-mono">
+              <p className="text-xs text-muted-foreground font-mono mt-2">
                 {selectedCommit.author} · {selectedCommit.date}
               </p>
             )}
           </DialogHeader>
-          <div className="flex-1 overflow-auto p-4 pt-2">
+
+          {/* Dialog body with resizable file/diff panels */}
+          <div className="flex-1 overflow-hidden flex">
             {diffLoading ? (
-              <div className="flex items-center justify-center h-32">
-                <Loader2 size={20} className="animate-spin text-muted-foreground" />
+              <div className="flex items-center justify-center w-full h-full">
+                <Loader2 size={24} className="animate-spin text-muted-foreground" />
               </div>
             ) : (
-              <DiffViewer diff={commitDiff} maxHeightClass="max-h-[calc(100vh-140px)]" mode={mode} onToggleMode={toggleMode} />
+              <ResizablePanelGroup className="w-full h-full">
+                {/* Left panel: File list */}
+                <ResizablePanel defaultSize={35} minSize={20}>
+                  <div ref={fileListRef} className="h-full w-full">
+                    <ScrollArea className="h-full">
+                      {diffFiles.length === 0 ? (
+                        <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
+                          No files changed
+                        </div>
+                      ) : (
+                        <ul className="py-1">
+                          {diffFiles.map((file, index) => (
+                            <li
+                              key={`${file.newFile}-${index}`}
+                              onClick={() => setSelectedFile(file.newFile)}
+                              className={`px-2.5 py-1.5 border-b border-border/40 last:border-0 cursor-pointer transition-colors ${
+                                selectedFile === file.newFile
+                                  ? "bg-muted text-foreground font-medium"
+                                  : "hover:bg-muted/50 text-muted-foreground"
+                              }`}
+                              title={file.newFile}
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className="truncate flex-1 text-xs font-mono">
+                                  {getDisplayPath(file.newFile)}
+                                </span>
+                                <div className="flex items-center gap-0.5 shrink-0">
+                                  {(file.additions || 0) > 0 && (
+                                    <span className="text-[10px] text-green-400 font-mono">
+                                      +{file.additions}
+                                    </span>
+                                  )}
+                                  {(file.deletions || 0) > 0 && (
+                                    <span className="text-[10px] text-red-400 font-mono">
+                                      -{file.deletions}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </ScrollArea>
+                  </div>
+                </ResizablePanel>
+
+                <ResizableHandle withHandle onPointerDown={(e) => e.stopPropagation()} />
+
+                {/* Right panel: Diff viewer */}
+                <ResizablePanel defaultSize={65} minSize={30}>
+                  {selectedFile ? (
+                    <div className="h-full overflow-auto p-4">
+                      <DiffViewer diff={selectedFileDiff} maxHeightClass="h-full" mode={mode} onToggleMode={toggleMode} />
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+                      Select a file to view changes
+                    </div>
+                  )}
+                </ResizablePanel>
+              </ResizablePanelGroup>
             )}
           </div>
         </DialogContent>

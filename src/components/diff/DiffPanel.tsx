@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 // Direct icon imports — avoids loading the entire lucide barrel (AGENTS.md §2.1)
 import { AlignLeft, Columns2, Copy, FileText, GitCommitHorizontal, Loader2 } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -16,6 +16,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { DiffViewer, parseDiff } from "./DiffViewer";
 import { useFileTokens } from "./highlight";
 import { git, type CommitInfo, type BlameLine } from "@/lib/git";
+import { getDiffCached, type ParsedDiff } from "@/lib/gitCache";
 
 const GROUP_COLORS = [
   "#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b",
@@ -33,7 +34,9 @@ interface DiffPanelProps {
  * Same functionality as DiffSheet but renders as an inline panel (not a modal).
  */
 export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
+  const requestIdRef = useRef(0);
   const [diffText, setDiffText] = useState("");
+  const [parsedDiff, setParsedDiff] = useState<ParsedDiff | null>(null);
   const [fileLog, setFileLog] = useState<CommitInfo[]>([]);
   const [blame, setBlame] = useState<BlameLine[]>([]);
   const [fileContent, setFileContent] = useState<string | null>(null);
@@ -43,28 +46,45 @@ export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
 
   useEffect(() => {
     if (!filePath) return;
+    const requestId = ++requestIdRef.current;
+
     setLoading(true);
     setDiffText("");
+    setParsedDiff(null);
     setFileLog([]);
     setBlame([]);
     setFileContent(null);
     setTab("diff");
 
-    // Start all three fetches in parallel (AGENTS.md §1.4).
-    // fileContent is needed immediately for inter-hunk gap expansion so we
-    // prefetch it alongside the diff rather than waiting for a tab switch.
-    Promise.all([
-      git.getDiff(repoPath, filePath, staged).catch(() => ""),
-      git.getFileLog(repoPath, filePath).catch(() => [] as CommitInfo[]),
-      git.getFileContent(repoPath, filePath).catch(() => null),
-    ])
-      .then(([d, log, content]) => {
-        setDiffText(d);
+    // Phase 4: make diff fetch unblock UI; history/file content continue in background.
+    getDiffCached(repoPath, filePath, staged)
+      .then((d) => {
+        if (requestId !== requestIdRef.current) return;
+        setDiffText(d.diff_text);
+        setParsedDiff(d.parsed ?? null);
+      })
+      .catch((e) => {
+        if (requestId !== requestIdRef.current) return;
+        toast.error(String(e));
+      })
+      .finally(() => {
+        if (requestId !== requestIdRef.current) return;
+        setLoading(false);
+      });
+
+    git.getFileLog(repoPath, filePath)
+      .then((log) => {
+        if (requestId !== requestIdRef.current) return;
         setFileLog(log);
+      })
+      .catch(() => {});
+
+    git.getFileContent(repoPath, filePath)
+      .then((content) => {
+        if (requestId !== requestIdRef.current) return;
         setFileContent(content);
       })
-      .catch((e) => toast.error(String(e)))
-      .finally(() => setLoading(false));
+      .catch(() => {});
   }, [filePath, repoPath, staged]);
 
   const handleTabChange = useCallback((value: string) => {
@@ -91,6 +111,13 @@ export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
 
   // Derived stats — calculated during rendering from existing data (AGENTS.md §5.1)
   const stats = useMemo(() => {
+    if (parsedDiff) {
+      return {
+        added: parsedDiff.total_added_lines,
+        removed: parsedDiff.total_removed_lines,
+      };
+    }
+
     const files = parseDiff(diffText);
     let added = 0, removed = 0;
     for (const f of files)
@@ -100,7 +127,7 @@ export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
           else if (l.type === "removed") removed++;
         }
     return { added, removed };
-  }, [diffText]);
+  }, [diffText, parsedDiff]);
 
   const blameGroups = useMemo(() => {
     if (!blame.length) return [];

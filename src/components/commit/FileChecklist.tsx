@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { CheckSquare, Square, MinusSquare, Eye, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -18,6 +18,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { git, type FileStatus } from "@/lib/git";
+import { invalidateDiff } from "@/lib/gitCache";
+import { usePreloadVisibleDiffs } from "@/hooks/usePreloadVisibleDiffs";
 
 interface FileChecklistProps {
   files: FileStatus[];
@@ -63,6 +65,10 @@ function FileRow({
       } else {
         await git.unstageFiles(repoPath, [file.path]);
       }
+      await Promise.all([
+        invalidateDiff(repoPath, file.path, true).catch(() => {}),
+        invalidateDiff(repoPath, file.path, false).catch(() => {}),
+      ]);
       await onRefresh();
     } catch (e) {
       toast.error(String(e));
@@ -75,6 +81,10 @@ function FileRow({
     setBusy(true);
     try {
       await git.discardFileChanges(repoPath, [file.path], file.unstaged_status === "?");
+      await Promise.all([
+        invalidateDiff(repoPath, file.path, true).catch(() => {}),
+        invalidateDiff(repoPath, file.path, false).catch(() => {}),
+      ]);
       await onRefresh();
       toast.success(`Discarded changes in ${file.path}`);
     } catch (e) {
@@ -163,9 +173,33 @@ export function FileChecklist({ files, repoPath, onRefresh, onViewDiff }: FileCh
   const staged = files.filter((f) => f.is_staged);
   const unstaged = files.filter((f) => f.is_unstaged);
 
+  const stagedPaths = useMemo(() => staged.map((f) => f.path), [staged]);
+  const unstagedPaths = useMemo(() => unstaged.map((f) => f.path), [unstaged]);
+
+  // Phase 4 preload: viewport-focused + deduped + debounced.
+  usePreloadVisibleDiffs({
+    repoPath,
+    files: stagedPaths,
+    staged: true,
+    maxPreload: 18,
+  });
+
+  usePreloadVisibleDiffs({
+    repoPath,
+    files: unstagedPaths,
+    staged: false,
+    maxPreload: 18,
+  });
+
   async function stageAll() {
     try {
       await git.stageFiles(repoPath, unstaged.map((f) => f.path));
+      await Promise.all(
+        unstaged.flatMap((f) => [
+          invalidateDiff(repoPath, f.path, true).catch(() => {}),
+          invalidateDiff(repoPath, f.path, false).catch(() => {}),
+        ])
+      );
       await onRefresh();
     } catch (e) {
       toast.error(String(e));
@@ -175,6 +209,12 @@ export function FileChecklist({ files, repoPath, onRefresh, onViewDiff }: FileCh
   async function unstageAll() {
     try {
       await git.unstageFiles(repoPath, staged.map((f) => f.path));
+      await Promise.all(
+        staged.flatMap((f) => [
+          invalidateDiff(repoPath, f.path, true).catch(() => {}),
+          invalidateDiff(repoPath, f.path, false).catch(() => {}),
+        ])
+      );
       await onRefresh();
     } catch (e) {
       toast.error(String(e));

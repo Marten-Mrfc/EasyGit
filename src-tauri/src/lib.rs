@@ -1,8 +1,13 @@
+mod cache;
 mod commands;
 
 use commands::{
     branch::{create_branch, delete_branch, get_branches, switch_branch},
-    diff::{get_blame, get_commit_diff, get_diff, get_file_content, get_file_log, get_log},
+    diff::{
+        clear_diff_cache, get_blame, get_cache_stats, get_commit_diff, get_diff, get_diff_batch,
+        get_diff_cached, get_file_content, get_file_log, get_log, invalidate_diff,
+        preload_visible_diffs,
+    },
     git::git_version,
     oauth::{github_poll_device_token, github_start_device_flow},
     remote::{create_github_repo, fetch, get_remotes, pull, push},
@@ -20,6 +25,9 @@ use commands::{
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Initialize cache
+    cache::init_cache(cache::CacheConfig::default());
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -70,6 +78,13 @@ pub fn run() {
             discard_file_changes,
             amend_commit,
             get_last_commit_message,
+            // ── Phase 1 cache commands ──
+            get_diff_cached,
+            get_diff_batch,
+            preload_visible_diffs,
+            clear_diff_cache,
+            invalidate_diff,
+            get_cache_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,5 +1,7 @@
+use crate::cache::{get_cache, parse_diff_parallel, DiffBatchResult, DiffResult, ParsedDiff};
 use crate::commands::git::git_run;
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CommitInfo {
@@ -36,6 +38,17 @@ fn parse_log_lines(output: &str) -> Vec<CommitInfo> {
             })
         })
         .collect()
+}
+
+async fn parse_diff_async(diff_text: String) -> Result<(ParsedDiff, u64), String> {
+    let parse_start = Instant::now();
+    let parse_input = diff_text.clone();
+
+    let parsed = tokio::task::spawn_blocking(move || parse_diff_parallel(&parse_input))
+        .await
+        .map_err(|e| format!("failed to join parser task: {e}"))?;
+
+    Ok((parsed, parse_start.elapsed().as_millis() as u64))
 }
 
 /// Returns the unified diff for a file (staged or unstaged).
@@ -241,4 +254,291 @@ pub async fn get_file_content(repo_path: String, file_path: String) -> Result<St
         return Err(out.stderr.trim().to_string());
     }
     Ok(out.stdout)
+}
+
+// ── PHASE 1: CACHE-AWARE DIFF COMMANDS ──────────────────────────────────────
+
+/// Get diff with memory cache (Phase 1 optimization)
+///
+/// Returns cached diff if available (<1ms), otherwise computes and caches.
+/// Includes metadata about whether result came from cache.
+#[tauri::command]
+pub async fn get_diff_cached(
+    repo_path: String,
+    file_path: String,
+    staged: bool,
+) -> Result<DiffResult, String> {
+    let cache = get_cache();
+
+    // Check cache first
+    if let Some(cached) = cache.get(&repo_path, &file_path, staged) {
+        cache.log_access(true);
+        let mut parse_time_ms = 0u64;
+        let mut parsed = cached.parsed.clone();
+
+        if parsed.is_none() {
+            let (computed, parse_ms) = parse_diff_async(cached.diff_text.clone()).await?;
+            parse_time_ms = parse_ms;
+            parsed = Some(computed.clone());
+            cache.set_with_parsed(
+                &repo_path,
+                &file_path,
+                staged,
+                cached.diff_text.clone(),
+                Some(computed),
+            );
+        }
+
+        return Ok(DiffResult {
+            file_path,
+            diff_text: cached.diff_text,
+            parsed,
+            parse_time_ms,
+            from_cache: true,
+        });
+    }
+
+    cache.log_access(false);
+
+    // Cache miss — compute diff
+    let diff_text = get_diff(repo_path.clone(), file_path.clone(), staged).await?;
+    let (parsed, parse_time_ms) = parse_diff_async(diff_text.clone()).await?;
+
+    // Store in cache for future access
+    cache.set_with_parsed(
+        &repo_path,
+        &file_path,
+        staged,
+        diff_text.clone(),
+        Some(parsed.clone()),
+    );
+
+    Ok(DiffResult {
+        file_path,
+        diff_text,
+        parsed: Some(parsed),
+        parse_time_ms,
+        from_cache: false,
+    })
+}
+
+/// Batch diff fetch for multiple files (Phase 1 optimization)
+///
+/// Single IPC call, parallel cache checks, returns all diffs with hit/miss info.
+/// Much faster than multiple individual get_diff calls.
+#[tauri::command]
+pub async fn get_diff_batch(
+    repo_path: String,
+    files: Vec<String>,
+    staged: bool,
+) -> Result<DiffBatchResult, String> {
+    let cache = get_cache();
+    let mut diffs = Vec::new();
+    let mut cache_hits = 0;
+    let mut cache_misses = 0;
+    let mut miss_tasks = Vec::new();
+
+    for file_path in files {
+        // Try cache first
+        if let Some(cached) = cache.get(&repo_path, &file_path, staged) {
+            cache_hits += 1;
+            let mut parse_time_ms = 0u64;
+            let mut parsed = cached.parsed.clone();
+
+            if parsed.is_none() {
+                let (computed, parse_ms) = parse_diff_async(cached.diff_text.clone()).await?;
+                parse_time_ms = parse_ms;
+                parsed = Some(computed.clone());
+                cache.set_with_parsed(
+                    &repo_path,
+                    &file_path,
+                    staged,
+                    cached.diff_text.clone(),
+                    Some(computed),
+                );
+            }
+
+            diffs.push(DiffResult {
+                file_path,
+                diff_text: cached.diff_text,
+                parsed,
+                parse_time_ms,
+                from_cache: true,
+            });
+            continue;
+        }
+
+        // Cache miss — compute in parallel
+        let repo_clone = repo_path.clone();
+        let file_clone = file_path.clone();
+        miss_tasks.push(tokio::spawn(async move {
+            let diff_text = get_diff(repo_clone.clone(), file_clone.clone(), staged).await?;
+            let (parsed, parse_time_ms) = parse_diff_async(diff_text.clone()).await?;
+            Ok::<(String, String, ParsedDiff, u64), String>((
+                file_clone,
+                diff_text,
+                parsed,
+                parse_time_ms,
+            ))
+        }));
+    }
+
+    for task in miss_tasks {
+        match task.await {
+            Ok(Ok((file_path, diff_text, parsed, parse_time_ms))) => {
+                cache.set_with_parsed(
+                    &repo_path,
+                    &file_path,
+                    staged,
+                    diff_text.clone(),
+                    Some(parsed.clone()),
+                );
+                cache_misses += 1;
+                diffs.push(DiffResult {
+                    file_path,
+                    diff_text,
+                    parsed: Some(parsed),
+                    parse_time_ms,
+                    from_cache: false,
+                });
+            }
+            Ok(Err(e)) => {
+                eprintln!("Failed to compute diff in batch: {}", e);
+            }
+            Err(e) => {
+                eprintln!("Batch task join error: {}", e);
+            }
+        }
+    }
+
+    let stats = cache.stats();
+    println!(
+        "📦 Batch diff: {} files | Cache: {}/{}✓ | HitRate: {:.1}% | Memory: {}KB | Disk: {}KB",
+        diffs.len(),
+        cache_hits,
+        cache_hits + cache_misses,
+        stats.hit_rate_pct,
+        stats.memory_used_kb,
+        stats.disk_used_kb
+    );
+
+    Ok(DiffBatchResult {
+        diffs,
+        total_cache_hits: cache_hits,
+        total_from_compute: cache_misses,
+    })
+}
+
+/// Preload diffs for visible files in background (Phase 1 optimization)
+///
+/// Non-blocking async call that preloads all visible files into cache.
+/// Returns immediately; loading happens in background.
+#[tauri::command]
+pub async fn preload_visible_diffs(
+    repo_path: String,
+    files: Vec<String>,
+    staged: bool,
+) -> Result<String, String> {
+    let repo_path_clone = repo_path.clone();
+    let files_clone = files.clone(); // Clone before move
+
+    // Spawn background task for preloading
+    tokio::spawn(async move {
+        let cache = get_cache();
+        let start = std::time::Instant::now();
+        let mut loaded = 0;
+        let mut skipped = 0;
+
+        for file_path in &files_clone {
+            // Skip if already cached
+            if cache.get(&repo_path_clone, file_path, staged).is_some() {
+                skipped += 1;
+                continue;
+            }
+
+            // Load and cache
+            match get_diff(repo_path_clone.clone(), file_path.clone(), staged).await {
+                Ok(diff_text) => {
+                    match parse_diff_async(diff_text.clone()).await {
+                        Ok((parsed, _)) => {
+                            cache.set_with_parsed(
+                                &repo_path_clone,
+                                file_path,
+                                staged,
+                                diff_text,
+                                Some(parsed),
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to parse preloaded diff for {}: {}", file_path, e);
+                            cache.set(&repo_path_clone, file_path, staged, diff_text);
+                        }
+                    }
+                    loaded += 1;
+                }
+                Err(e) => {
+                    eprintln!("Failed to preload {}: {}", file_path, e);
+                }
+            }
+        }
+
+        let elapsed = start.elapsed().as_millis();
+        let stats = cache.stats();
+        println!(
+            "⚡ Preload complete: {} loaded, {} skipped ({}ms) | HitRate: {:.1}% | Memory: {}KB | Disk: {}KB",
+            loaded,
+            skipped,
+            elapsed,
+            stats.hit_rate_pct,
+            stats.memory_used_kb,
+            stats.disk_used_kb
+        );
+    });
+
+    Ok(format!("Preload started for {} files", files.len()))
+}
+
+/// Clear cache for a repository (Phase 1 utility)
+#[tauri::command]
+pub async fn clear_diff_cache(repo_path: String) -> Result<String, String> {
+    let cache = get_cache();
+    cache.clear_repo(&repo_path);
+    println!("🗑️ Cache cleared for {}", repo_path);
+    Ok(format!("Cache cleared for {}", repo_path))
+}
+
+/// Invalidate one file entry from cache (Phase 3 targeted invalidation)
+#[tauri::command]
+pub async fn invalidate_diff(
+    repo_path: String,
+    file_path: String,
+    staged: bool,
+) -> Result<String, String> {
+    let cache = get_cache();
+    cache.invalidate(&repo_path, &file_path, staged);
+    Ok(format!("Invalidated {}", file_path))
+}
+
+/// Get cache statistics (Phase 1 diagnostics)
+#[tauri::command]
+pub async fn get_cache_stats() -> Result<serde_json::Value, String> {
+    let cache = get_cache();
+    let stats = cache.stats();
+
+    Ok(serde_json::json!({
+        "total_entries": stats.total_entries,
+        "memory_used_kb": stats.memory_used_kb,
+        "disk_entries": stats.disk_entries,
+        "disk_used_kb": stats.disk_used_kb,
+        "requests": stats.requests,
+        "memory_hits": stats.memory_hits,
+        "disk_hits": stats.disk_hits,
+        "misses": stats.misses,
+        "hit_rate_pct": stats.hit_rate_pct,
+        "memory_evictions": stats.memory_evictions,
+        "disk_evictions": stats.disk_evictions,
+        "disk_reads": stats.disk_reads,
+        "disk_writes": stats.disk_writes,
+        "warm_loaded": stats.warm_loaded,
+    }))
 }

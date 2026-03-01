@@ -12,6 +12,7 @@ import {
 import { FileChecklist } from "@/components/commit/FileChecklist";
 import { useRepoStore } from "@/store/repoStore";
 import { git, type FileStatus } from "@/lib/git";
+import { clearDiffCache } from "@/lib/gitCache";
 
 // Lazy load heavy components
 const ConventionalCommitBuilder = lazy(() =>
@@ -175,6 +176,14 @@ export function ChangesView() {
   useEffect(() => {
     refreshStatus();
   }, [refreshStatus]);
+
+  // Phase 1 cache lifecycle: clear cache when leaving the current repo context.
+  useEffect(() => {
+    if (!repoPath) return;
+    return () => {
+      clearDiffCache(repoPath).catch(() => {});
+    };
+  }, [repoPath]);
 
   // Close diff panel on Escape key
   useEffect(() => {

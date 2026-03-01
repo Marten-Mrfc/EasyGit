@@ -232,7 +232,7 @@ export function FileChecklist({ files, repoPath, onRefresh, onViewDiff, onCloseD
 
   return (
     <ScrollArea className="h-full">
-      <div className="py-1" onClick={handleClickEmpty}>
+      <div className="py-1 min-h-full" onClick={handleClickEmpty}>
         {/* Staged section */}
         {staged.length > 0 && (
           <>

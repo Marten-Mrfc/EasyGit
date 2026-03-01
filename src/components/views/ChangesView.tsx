@@ -292,14 +292,21 @@ export function ChangesView() {
       <ResizablePanelGroup className="flex-1 overflow-hidden" style={{ flexDirection: "row" }}>
         {/* Left: File list */}
         <ResizablePanel defaultSize={38} minSize={24}>
-          <div className="h-full overflow-hidden">
+          <div 
+            className="h-full overflow-hidden" 
+            onClick={(e) => {
+              // Only close if clicking directly on the panel, not on file rows or other content
+              if (e.target === e.currentTarget && diffFile) {
+                setDiffFile(null);
+              }
+            }}
+          >
             <Suspense fallback={<FileChecklistSkeleton />}>
               <FileChecklist
                 files={status}
                 repoPath={repoPath!}
                 onRefresh={refreshStatus}
                 onViewDiff={handleViewDiff}
-                onCloseDiff={() => setDiffFile(null)}
               />
             </Suspense>
           </div>

@@ -26,7 +26,6 @@ interface FileChecklistProps {
   repoPath: string;
   onRefresh: () => Promise<void>;
   onViewDiff?: (file: FileStatus, staged: boolean) => void;
-  onCloseDiff?: () => void;
 }
 
 // Colour-coded status badge
@@ -184,13 +183,6 @@ export function FileChecklist({ files, repoPath, onRefresh, onViewDiff, onCloseD
     maxPreload: 18,
   });
 
-  const handleClickEmpty = (e: React.MouseEvent<HTMLDivElement>) => {
-    // Only close if clicking directly on the empty area, not on child elements
-    if (e.target === e.currentTarget) {
-      onCloseDiff?.();
-    }
-  };
-
   async function stageAll() {
     try {
       await git.stageFiles(repoPath, unstaged.map((f) => f.path));
@@ -232,7 +224,7 @@ export function FileChecklist({ files, repoPath, onRefresh, onViewDiff, onCloseD
 
   return (
     <ScrollArea className="h-full">
-      <div className="py-1 min-h-full" onClick={handleClickEmpty}>
+      <div className="py-1">
         {/* Staged section */}
         {staged.length > 0 && (
           <>

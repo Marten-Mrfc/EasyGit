@@ -93,8 +93,6 @@ interface ConventionalCommitBuilderProps {
   onCommitSuccess: () => void;
 }
 
-type CommitType = typeof COMMIT_TYPES[number]["value"];
-
 export function ConventionalCommitBuilder({
   repoPath,
   hasStaged,

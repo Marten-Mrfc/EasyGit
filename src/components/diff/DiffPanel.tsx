@@ -1,4 +1,4 @@
-import { useMemo, useState, useReducer, useEffect, useCallback, useRef } from "react";
+import { useMemo, useReducer, useEffect, useCallback, useRef } from "react";
 // Direct icon imports — avoids loading the entire lucide barrel (AGENTS.md §2.1)
 import { AlignLeft, Columns2, Copy, FileText, GitCommitHorizontal, Loader2 } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -130,14 +130,18 @@ export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
         if (requestId !== requestIdRef.current) return;
         dispatch({ type: "SET_FILE_LOG", payload: log });
       })
-      .catch(() => {});
+      .catch(() => {
+        // Silently fail for new files not in git — just remains empty
+      });
 
     git.getFileContent(repoPath, filePath)
       .then((content) => {
         if (requestId !== requestIdRef.current) return;
         dispatch({ type: "SET_FILE_CONTENT", payload: content });
       })
-      .catch(() => {});
+      .catch(() => {
+        // Silently fail for new files not in git — just remains null
+      });
   }, [filePath, repoPath, staged]);
 
   const handleTabChange = useCallback((value: string) => {
@@ -145,12 +149,18 @@ export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
     if (value === "blame" && panel.blame.length === 0 && !panel.loading) {
       git.getBlame(repoPath, filePath)
         .then((blame) => dispatch({ type: "SET_BLAME", payload: blame }))
-        .catch((e) => toast.error(String(e)));
+        .catch(() => {
+          // Silently fail for new files or files not in git (no toast)
+          // The empty state message will show instead
+        });
     }
     if (value === "file" && panel.fileContent === null && !panel.loading) {
       git.getFileContent(repoPath, filePath)
         .then((content) => dispatch({ type: "SET_FILE_CONTENT", payload: content }))
-        .catch((e) => toast.error(String(e)));
+        .catch(() => {
+          // Silently fail for new files or files not in git (no toast)
+          // Empty state or current working version will be shown
+        });
     }
   }, [panel.blame.length, panel.fileContent, panel.loading, repoPath, filePath]);
 
@@ -237,7 +247,10 @@ export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
                   variant={panel.mode === "unified" ? "secondary" : "ghost"}
                   size="icon"
                   className="h-6 w-6"
-                  onClick={() => dispatch({ type: "SET_TAB", payload: "diff" }) || (panel.mode === "unified" ? null : dispatch({ type: "TOGGLE_MODE" }))}
+                  onClick={() => {
+                    dispatch({ type: "SET_TAB", payload: "diff" });
+                    if (panel.mode !== "unified") dispatch({ type: "TOGGLE_MODE" });
+                  }}
                 >
                   <AlignLeft size={12} />
                 </Button>
@@ -299,8 +312,9 @@ export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
             <TabsContent value="file" className="flex-1 overflow-hidden mt-0 min-h-0">
               <ScrollArea className="h-full">
                 {panel.fileContent === null ? (
-                  <div className="flex items-center justify-center h-24 text-sm text-muted-foreground">
-                    Loading…
+                  <div className="flex flex-col items-center justify-center h-24 gap-2 text-sm text-muted-foreground">
+                    <p>Unable to load full file</p>
+                    <p className="text-xs text-muted-foreground/60">(New/untracked files not in git)</p>
                   </div>
                 ) : (
                   <table className="w-full font-mono text-xs">
@@ -331,8 +345,9 @@ export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
             <TabsContent value="history" className="flex-1 overflow-hidden mt-0 min-h-0">
               <ScrollArea className="h-full">
                 {panel.fileLog.length === 0 ? (
-                  <div className="flex items-center justify-center h-24 text-sm text-muted-foreground">
-                    No commits found for this file
+                  <div className="flex flex-col items-center justify-center h-24 gap-2 text-sm text-muted-foreground">
+                    <p>No commits found</p>
+                    <p className="text-xs text-muted-foreground/60">(File is new or untracked)</p>
                   </div>
                 ) : (
                   <ul className="py-2">
@@ -358,8 +373,17 @@ export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
             <TabsContent value="blame" className="flex-1 overflow-hidden mt-0 min-h-0">
               <ScrollArea className="h-full">
                 {blameGroups.length === 0 ? (
-                  <div className="flex items-center justify-center h-24 text-sm text-muted-foreground">
-                    {panel.tab === "blame" ? "Loading blame…" : "Click Blame tab to load"}
+                  <div className="flex flex-col items-center justify-center h-24 gap-2 text-sm text-muted-foreground">
+                    {panel.tab === "blame" ? (
+                      <>
+                        <p>No blame information</p>
+                        <p className="text-xs text-muted-foreground/60">(File is new or untracked)</p>
+                      </>
+                    ) : (
+                      <>
+                        <p>Click Blame tab to load</p>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <table className="w-full text-xs font-mono">

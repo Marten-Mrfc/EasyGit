@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { CheckSquare, Square, MinusSquare, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -26,6 +26,7 @@ interface FileChecklistProps {
   repoPath: string;
   onRefresh: () => Promise<void>;
   onViewDiff?: (file: FileStatus, staged: boolean) => void;
+  onCloseDiff?: () => void;
 }
 
 // Colour-coded status badge
@@ -98,6 +99,7 @@ function FileRow({
 
   return (
     <div
+      data-file-row="true"
       className={cn(
         "flex items-center gap-2 px-3 py-1.5 rounded-sm hover:bg-muted/50 group cursor-pointer select-none transition-colors",
         busy && "opacity-50 pointer-events-none"
@@ -213,6 +215,28 @@ export function FileChecklist({ files, repoPath, onRefresh, onViewDiff, onCloseD
     }
   }
 
+  const handleBackgroundClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!onCloseDiff) return;
+      const target = e.target as HTMLElement;
+
+      // Keep row/button interactions intact; only close on non-interactive background clicks.
+      if (
+        target.closest('[data-file-row="true"]') ||
+        target.closest("button") ||
+        target.closest("a") ||
+        target.closest("input") ||
+        target.closest("textarea") ||
+        target.closest("select")
+      ) {
+        return;
+      }
+
+      onCloseDiff();
+    },
+    [onCloseDiff]
+  );
+
   if (files.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-2 text-muted-foreground">
@@ -223,8 +247,8 @@ export function FileChecklist({ files, repoPath, onRefresh, onViewDiff, onCloseD
   }
 
   return (
-    <ScrollArea className="h-full">
-      <div className="py-1">
+    <ScrollArea className="h-full" onClickCapture={handleBackgroundClick}>
+      <div className="py-1 min-h-full flex flex-col">
         {/* Staged section */}
         {staged.length > 0 && (
           <>
@@ -286,6 +310,7 @@ export function FileChecklist({ files, repoPath, onRefresh, onViewDiff, onCloseD
             ))}
           </>
         )}
+        <div className="flex-1" />
       </div>
     </ScrollArea>
   );

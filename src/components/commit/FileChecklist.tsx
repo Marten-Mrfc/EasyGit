@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { CheckSquare, Square, MinusSquare, Eye, Undo2 } from "lucide-react";
+import { CheckSquare, Square, MinusSquare, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -102,7 +102,9 @@ function FileRow({
         "flex items-center gap-2 px-3 py-1.5 rounded-sm hover:bg-muted/50 group cursor-pointer select-none transition-colors",
         busy && "opacity-50 pointer-events-none"
       )}
-      onClick={toggle}
+      onClick={() => onViewDiff?.(file, type === "staged")}
+      onDoubleClick={toggle}
+      title="Single-click to view diff, double-click to stage/unstage"
     >
       <Icon
         size={15}
@@ -121,16 +123,6 @@ function FileRow({
         {file.path}
       </span>
       <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-        {onViewDiff && (
-          <button
-            className="text-muted-foreground hover:text-foreground p-0.5 rounded"
-            onClick={(e) => { e.stopPropagation(); onViewDiff(file, type === "staged"); }}
-            title="View diff"
-            aria-label="View diff"
-          >
-            <Eye size={12} />
-          </button>
-        )}
         {type === "unstaged" && (
           <AlertDialog>
             <AlertDialogTrigger asChild>

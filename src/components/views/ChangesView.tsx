@@ -299,6 +299,7 @@ export function ChangesView() {
                 repoPath={repoPath!}
                 onRefresh={refreshStatus}
                 onViewDiff={handleViewDiff}
+                onCloseDiff={() => setDiffFile(null)}
               />
             </Suspense>
           </div>

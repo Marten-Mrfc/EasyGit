@@ -26,6 +26,7 @@ interface FileChecklistProps {
   repoPath: string;
   onRefresh: () => Promise<void>;
   onViewDiff?: (file: FileStatus, staged: boolean) => void;
+  onCloseDiff?: () => void;
 }
 
 // Colour-coded status badge
@@ -161,7 +162,7 @@ function FileRow({
   );
 }
 
-export function FileChecklist({ files, repoPath, onRefresh, onViewDiff }: FileChecklistProps) {
+export function FileChecklist({ files, repoPath, onRefresh, onViewDiff, onCloseDiff }: FileChecklistProps) {
   const staged = files.filter((f) => f.is_staged);
   const unstaged = files.filter((f) => f.is_unstaged);
 
@@ -182,6 +183,13 @@ export function FileChecklist({ files, repoPath, onRefresh, onViewDiff }: FileCh
     staged: false,
     maxPreload: 18,
   });
+
+  const handleClickEmpty = (e: React.MouseEvent<HTMLDivElement>) => {
+    // Only close if clicking directly on the empty area, not on child elements
+    if (e.target === e.currentTarget) {
+      onCloseDiff?.();
+    }
+  };
 
   async function stageAll() {
     try {
@@ -224,7 +232,7 @@ export function FileChecklist({ files, repoPath, onRefresh, onViewDiff }: FileCh
 
   return (
     <ScrollArea className="h-full">
-      <div className="py-1">
+      <div className="py-1" onClick={handleClickEmpty}>
         {/* Staged section */}
         {staged.length > 0 && (
           <>

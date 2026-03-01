@@ -231,3 +231,14 @@ fn epoch_to_date(epoch: i64) -> String {
     let y = if m <= 2 { y + 1 } else { y };
     format!("{:04}-{:02}-{:02}", y, m, d)
 }
+
+/// Returns the full content of a file at HEAD (for the "Full file" tab).
+#[tauri::command]
+pub async fn get_file_content(repo_path: String, file_path: String) -> Result<String, String> {
+    let file_ref = file_path.as_str();
+    let out = git_run(&repo_path, &["show", &format!("HEAD:{}", file_ref)])?;
+    if !out.success {
+        return Err(out.stderr.trim().to_string());
+    }
+    Ok(out.stdout)
+}

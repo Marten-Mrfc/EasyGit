@@ -152,6 +152,9 @@ export const git = {
   getBlame: (repoPath: string, filePath: string) =>
     invoke<BlameLine[]>("get_blame", { repoPath, filePath }),
 
+  getFileContent: (repoPath: string, filePath: string) =>
+    invoke<string>("get_file_content", { repoPath, filePath }),
+
   // Stash
   listStashes: (repoPath: string) =>
     invoke<StashInfo[]>("list_stashes", { repoPath }),

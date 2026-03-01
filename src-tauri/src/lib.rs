@@ -2,7 +2,7 @@ mod commands;
 
 use commands::{
     branch::{create_branch, delete_branch, get_branches, switch_branch},
-    diff::{get_blame, get_commit_diff, get_diff, get_file_log, get_log},
+    diff::{get_blame, get_commit_diff, get_diff, get_file_content, get_file_log, get_log},
     git::git_version,
     oauth::{github_poll_device_token, github_start_device_flow},
     remote::{create_github_repo, fetch, get_remotes, pull, push},
@@ -51,6 +51,7 @@ pub fn run() {
             get_log,
             get_file_log,
             get_blame,
+            get_file_content,
             list_stashes,
             stash_push,
             stash_pop,

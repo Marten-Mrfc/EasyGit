@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback, useRef } from "react";
+import { useMemo, useState, useReducer, useEffect, useCallback, useRef } from "react";
 // Direct icon imports — avoids loading the entire lucide barrel (AGENTS.md §2.1)
 import { AlignLeft, Columns2, Copy, FileText, GitCommitHorizontal, Loader2 } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -29,39 +29,92 @@ interface DiffPanelProps {
   staged: boolean;
 }
 
+// Panel state for efficient batch updates (§5.1 derived state)
+interface PanelState {
+  diffText: string;
+  parsedDiff: ParsedDiff | null;
+  fileLog: CommitInfo[];
+  blame: BlameLine[];
+  fileContent: string | null;
+  loading: boolean;
+  tab: string;
+  mode: "unified" | "split";
+}
+
+type PanelAction =
+  | { type: "RESET" }
+  | { type: "SET_LOADING"; payload: boolean }
+  | { type: "SET_DIFF"; payload: { diffText: string; parsedDiff?: ParsedDiff | null } }
+  | { type: "SET_FILE_LOG"; payload: CommitInfo[] }
+  | { type: "SET_BLAME"; payload: BlameLine[] }
+  | { type: "SET_FILE_CONTENT"; payload: string }
+  | { type: "SET_TAB"; payload: string }
+  | { type: "TOGGLE_MODE" };
+
+const initialPanelState: PanelState = {
+  diffText: "",
+  parsedDiff: null,
+  fileLog: [],
+  blame: [],
+  fileContent: null,
+  loading: false,
+  tab: "diff",
+  mode: "unified",
+};
+
+function panelReducer(state: PanelState, action: PanelAction): PanelState {
+  switch (action.type) {
+    case "RESET":
+      return {
+        ...initialPanelState,
+        mode: state.mode, // Preserve mode preference
+      };
+    case "SET_LOADING":
+      return { ...state, loading: action.payload };
+    case "SET_DIFF":
+      return {
+        ...state,
+        diffText: action.payload.diffText,
+        parsedDiff: action.payload.parsedDiff ?? null,
+      };
+    case "SET_FILE_LOG":
+      return { ...state, fileLog: action.payload };
+    case "SET_BLAME":
+      return { ...state, blame: action.payload };
+    case "SET_FILE_CONTENT":
+      return { ...state, fileContent: action.payload };
+    case "SET_TAB":
+      return { ...state, tab: action.payload };
+    case "TOGGLE_MODE":
+      return {
+        ...state,
+        mode: state.mode === "unified" ? "split" : "unified",
+      };
+    default:
+      return state;
+  }
+}
+
 /**
  * Embedded diff panel for side-by-side display in ChangesView.
  * Same functionality as DiffSheet but renders as an inline panel (not a modal).
  */
 export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
   const requestIdRef = useRef(0);
-  const [diffText, setDiffText] = useState("");
-  const [parsedDiff, setParsedDiff] = useState<ParsedDiff | null>(null);
-  const [fileLog, setFileLog] = useState<CommitInfo[]>([]);
-  const [blame, setBlame] = useState<BlameLine[]>([]);
-  const [fileContent, setFileContent] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [tab, setTab] = useState("diff");
-  const [mode, setMode] = useState<"unified" | "split">("unified");
+  const [panel, dispatch] = useReducer(panelReducer, initialPanelState);
 
   useEffect(() => {
     if (!filePath) return;
     const requestId = ++requestIdRef.current;
 
-    setLoading(true);
-    setDiffText("");
-    setParsedDiff(null);
-    setFileLog([]);
-    setBlame([]);
-    setFileContent(null);
-    setTab("diff");
+    dispatch({ type: "RESET" });
+    dispatch({ type: "SET_LOADING", payload: true });
 
     // Phase 4: make diff fetch unblock UI; history/file content continue in background.
     getDiffCached(repoPath, filePath, staged)
       .then((d) => {
         if (requestId !== requestIdRef.current) return;
-        setDiffText(d.diff_text);
-        setParsedDiff(d.parsed ?? null);
+        dispatch({ type: "SET_DIFF", payload: { diffText: d.diff_text, parsedDiff: d.parsed } });
       })
       .catch((e) => {
         if (requestId !== requestIdRef.current) return;
@@ -69,56 +122,56 @@ export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
       })
       .finally(() => {
         if (requestId !== requestIdRef.current) return;
-        setLoading(false);
+        dispatch({ type: "SET_LOADING", payload: false });
       });
 
     git.getFileLog(repoPath, filePath)
       .then((log) => {
         if (requestId !== requestIdRef.current) return;
-        setFileLog(log);
+        dispatch({ type: "SET_FILE_LOG", payload: log });
       })
       .catch(() => {});
 
     git.getFileContent(repoPath, filePath)
       .then((content) => {
         if (requestId !== requestIdRef.current) return;
-        setFileContent(content);
+        dispatch({ type: "SET_FILE_CONTENT", payload: content });
       })
       .catch(() => {});
   }, [filePath, repoPath, staged]);
 
   const handleTabChange = useCallback((value: string) => {
-    setTab(value);
-    if (value === "blame" && blame.length === 0 && !loading) {
+    dispatch({ type: "SET_TAB", payload: value });
+    if (value === "blame" && panel.blame.length === 0 && !panel.loading) {
       git.getBlame(repoPath, filePath)
-        .then(setBlame)
+        .then((blame) => dispatch({ type: "SET_BLAME", payload: blame }))
         .catch((e) => toast.error(String(e)));
     }
-    if (value === "file" && fileContent === null && !loading) {
+    if (value === "file" && panel.fileContent === null && !panel.loading) {
       git.getFileContent(repoPath, filePath)
-        .then(setFileContent)
+        .then((content) => dispatch({ type: "SET_FILE_CONTENT", payload: content }))
         .catch((e) => toast.error(String(e)));
     }
-  }, [blame.length, fileContent, loading, repoPath, filePath]);
+  }, [panel.blame.length, panel.fileContent, panel.loading, repoPath, filePath]);
 
   const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(diffText).then(() => toast.success("Diff copied")).catch(() => {});
-  }, [diffText]);
+    navigator.clipboard.writeText(panel.diffText).then(() => toast.success("Diff copied")).catch(() => {});
+  }, [panel.diffText]);
 
   const toggleMode = useCallback(() => {
-    setMode((m) => (m === "unified" ? "split" : "unified"));
+    dispatch({ type: "TOGGLE_MODE" });
   }, []);
 
   // Derived stats — calculated during rendering from existing data (AGENTS.md §5.1)
   const stats = useMemo(() => {
-    if (parsedDiff) {
+    if (panel.parsedDiff) {
       return {
-        added: parsedDiff.total_added_lines,
-        removed: parsedDiff.total_removed_lines,
+        added: panel.parsedDiff.total_added_lines,
+        removed: panel.parsedDiff.total_removed_lines,
       };
     }
 
-    const files = parseDiff(diffText);
+    const files = parseDiff(panel.diffText);
     let added = 0, removed = 0;
     for (const f of files)
       for (const h of f.hunks)
@@ -127,14 +180,14 @@ export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
           else if (l.type === "removed") removed++;
         }
     return { added, removed };
-  }, [diffText, parsedDiff]);
+  }, [panel.diffText, panel.parsedDiff]);
 
   const blameGroups = useMemo(() => {
-    if (!blame.length) return [];
+    if (!panel.blame.length) return [];
     const groups: { hash: string; lines: BlameLine[]; color: string }[] = [];
     let colorIdx = 0;
     const hashColors = new Map<string, string>();
-    for (const bl of blame) {
+    for (const bl of panel.blame) {
       const prev = groups[groups.length - 1];
       if (prev && prev.hash === bl.hash) {
         prev.lines.push(bl);
@@ -147,17 +200,17 @@ export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
       }
     }
     return groups;
-  }, [blame]);
+  }, [panel.blame]);
 
   const fileName = filePath.replace(/\\/g, "/").split("/").slice(-1)[0] ?? filePath;
 
   // Stable array reference — only re-splits when fileContent actually changes.
   // Passed to DiffViewer so inter-hunk gaps can be expanded without a round-trip.
-  const fileLines = useMemo(() => fileContent?.split("\n") ?? null, [fileContent]);
+  const fileLines = useMemo(() => panel.fileContent?.split("\n") ?? null, [panel.fileContent]);
 
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme !== "light";
-  const fileTokens = useFileTokens(fileContent, fileName, isDark);
+  const fileTokens = useFileTokens(panel.fileContent, fileName, isDark);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -181,10 +234,10 @@ export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
-                  variant={mode === "unified" ? "secondary" : "ghost"}
+                  variant={panel.mode === "unified" ? "secondary" : "ghost"}
                   size="icon"
                   className="h-6 w-6"
-                  onClick={() => setMode("unified")}
+                  onClick={() => dispatch({ type: "SET_TAB", payload: "diff" }) || (panel.mode === "unified" ? null : dispatch({ type: "TOGGLE_MODE" }))}
                 >
                   <AlignLeft size={12} />
                 </Button>
@@ -194,10 +247,10 @@ export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
-                  variant={mode === "split" ? "secondary" : "ghost"}
+                  variant={panel.mode === "split" ? "secondary" : "ghost"}
                   size="icon"
                   className="h-6 w-6"
-                  onClick={() => setMode("split")}
+                  onClick={() => (panel.mode === "split" ? null : dispatch({ type: "TOGGLE_MODE" }))}
                 >
                   <Columns2 size={12} />
                 </Button>
@@ -217,15 +270,15 @@ export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
       </div>
 
       {/* Content tabs */}
-      <Tabs value={tab} onValueChange={handleTabChange} className="flex-1 flex flex-col overflow-hidden min-h-0">
+      <Tabs value={panel.tab} onValueChange={handleTabChange} className="flex-1 flex flex-col overflow-hidden min-h-0">
         <TabsList className="mx-4 mt-2 shrink-0 w-fit">
           <TabsTrigger value="diff">Diff</TabsTrigger>
           <TabsTrigger value="file">Full File</TabsTrigger>
-          <TabsTrigger value="history">History ({fileLog.length})</TabsTrigger>
+          <TabsTrigger value="history">History ({panel.fileLog.length})</TabsTrigger>
           <TabsTrigger value="blame">Blame</TabsTrigger>
         </TabsList>
 
-        {loading ? (
+        {panel.loading ? (
           <div className="flex items-center justify-center flex-1">
             <Loader2 size={20} className="animate-spin text-muted-foreground" />
           </div>
@@ -234,10 +287,10 @@ export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
             {/* Diff tab — takes full remaining height; DiffViewer virtualizes the lines */}
             <TabsContent value="diff" className="flex-1 overflow-hidden mt-0 p-3 pt-2 min-h-0">
               <DiffViewer
-                diff={diffText}
+                diff={panel.diffText}
                 filePath={fileName}
                 maxHeightClass="h-full"
-                mode={mode}
+                mode={panel.mode}
                 onToggleMode={toggleMode}
                 fileLines={fileLines}
               />
@@ -245,14 +298,14 @@ export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
 
             <TabsContent value="file" className="flex-1 overflow-hidden mt-0 min-h-0">
               <ScrollArea className="h-full">
-                {fileContent === null ? (
+                {panel.fileContent === null ? (
                   <div className="flex items-center justify-center h-24 text-sm text-muted-foreground">
                     Loading…
                   </div>
                 ) : (
                   <table className="w-full font-mono text-xs">
                     <tbody>
-                      {fileContent.split("\n").map((line, i) => (
+                      {panel.fileContent.split("\n").map((line, i) => (
                         <tr key={i} className="hover:bg-muted/20 border-b border-border/10">
                           <td className="text-right pr-3 pl-2 select-none w-10 shrink-0 text-muted-foreground/40 leading-5">
                             {i + 1}
@@ -277,13 +330,13 @@ export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
 
             <TabsContent value="history" className="flex-1 overflow-hidden mt-0 min-h-0">
               <ScrollArea className="h-full">
-                {fileLog.length === 0 ? (
+                {panel.fileLog.length === 0 ? (
                   <div className="flex items-center justify-center h-24 text-sm text-muted-foreground">
                     No commits found for this file
                   </div>
                 ) : (
                   <ul className="py-2">
-                    {fileLog.map((c) => (
+                    {panel.fileLog.map((c) => (
                       <li
                         key={c.hash}
                         className="flex items-start gap-3 px-4 py-2 hover:bg-muted/30 border-b border-border/40 last:border-0"
@@ -306,7 +359,7 @@ export function DiffPanel({ repoPath, filePath, staged }: DiffPanelProps) {
               <ScrollArea className="h-full">
                 {blameGroups.length === 0 ? (
                   <div className="flex items-center justify-center h-24 text-sm text-muted-foreground">
-                    {tab === "blame" ? "Loading blame…" : "Click Blame tab to load"}
+                    {panel.tab === "blame" ? "Loading blame…" : "Click Blame tab to load"}
                   </div>
                 ) : (
                   <table className="w-full text-xs font-mono">

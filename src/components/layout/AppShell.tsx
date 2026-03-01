@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Titlebar } from "./Titlebar";
 import { Sidebar, type View } from "./Sidebar";
 import { CommandPalette } from "./CommandPalette";
@@ -12,16 +12,26 @@ interface AppShellProps {
 export function AppShell({ children }: AppShellProps) {
   const [activeView, setActiveView] = useState<View>("changes");
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const handlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
 
   useEffect(() => {
+    // Only register handler once (§4.1 deduplicate global event listeners)
+    if (handlerRef.current) return;
+    
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "k") {
         e.preventDefault();
         setPaletteOpen((o) => !o);
       }
     };
+    
+    handlerRef.current = handler;
     window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    
+    return () => {
+      window.removeEventListener("keydown", handler);
+      handlerRef.current = null;
+    };
   }, []);
 
   return (

@@ -268,12 +268,11 @@ export function ChangesView() {
     setDiffStaged(staged);
   }, []);
 
-  // Memoize filtered staged files
-  const staged = useCallback(() => {
-    return status.filter((f) => f.is_staged);
+  // Memoize filtered staged files (§5.3 don't wrap simple derived state in useMemo, but
+  // this is an array creation which should be memoized to prevent unnecessary renders)
+  const stagedCount = useMemo(() => {
+    return status.filter((f) => f.is_staged).length;
   }, [status]);
-
-  const stagedCount = staged().length;
 
   return (
     <div className="flex flex-col h-full">

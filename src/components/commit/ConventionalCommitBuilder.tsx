@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useReducer, useMemo, useEffect, useCallback } from "react";
 import { GitCommitHorizontal, ChevronDown, ChevronUp, AlertTriangle, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -30,86 +30,146 @@ const COMMIT_TYPES = [
 
 type CommitType = typeof COMMIT_TYPES[number]["value"];
 
+// Form state and reducer for efficient batch updates (§5.1 derived state)
+interface FormState {
+  selectedType: CommitType | null;
+  scope: string;
+  breaking: boolean;
+  description: string;
+  body: string;
+  bodyOpen: boolean;
+  amend: boolean;
+}
+
+type FormAction =
+  | { type: "SET_TYPE"; payload: CommitType | null }
+  | { type: "SET_SCOPE"; payload: string }
+  | { type: "SET_BREAKING"; payload: boolean }
+  | { type: "SET_DESCRIPTION"; payload: string }
+  | { type: "SET_BODY"; payload: string }
+  | { type: "SET_BODY_OPEN"; payload: boolean }
+  | { type: "SET_AMEND"; payload: boolean }
+  | { type: "FILL_FROM_COMMIT"; payload: Partial<FormState> }
+  | { type: "RESET" };
+
+const initialFormState: FormState = {
+  selectedType: null,
+  scope: "",
+  breaking: false,
+  description: "",
+  body: "",
+  bodyOpen: false,
+  amend: false,
+};
+
+function formReducer(state: FormState, action: FormAction): FormState {
+  switch (action.type) {
+    case "SET_TYPE":
+      return { ...state, selectedType: action.payload };
+    case "SET_SCOPE":
+      return { ...state, scope: action.payload };
+    case "SET_BREAKING":
+      return { ...state, breaking: action.payload };
+    case "SET_DESCRIPTION":
+      return { ...state, description: action.payload };
+    case "SET_BODY":
+      return { ...state, body: action.payload };
+    case "SET_BODY_OPEN":
+      return { ...state, bodyOpen: action.payload };
+    case "SET_AMEND":
+      return { ...state, amend: action.payload };
+    case "FILL_FROM_COMMIT":
+      return { ...state, ...action.payload };
+    case "RESET":
+      return initialFormState;
+    default:
+      return state;
+  }
+}
+
 interface ConventionalCommitBuilderProps {
   repoPath: string;
   hasStaged: boolean;
   onCommitSuccess: () => void;
 }
 
+type CommitType = typeof COMMIT_TYPES[number]["value"];
+
 export function ConventionalCommitBuilder({
   repoPath,
   hasStaged,
   onCommitSuccess,
 }: ConventionalCommitBuilderProps) {
-  const [selectedType, setSelectedType] = useState<CommitType | null>(null);
-  const [scope, setScope] = useState("");
-  const [breaking, setBreaking] = useState(false);
-  const [description, setDescription] = useState("");
-  const [body, setBody] = useState("");
-  const [bodyOpen, setBodyOpen] = useState(false);
+  const [form, dispatch] = useReducer(formReducer, initialFormState);
   const [committing, setCommitting] = useState(false);
-  const [amend, setAmend] = useState(false);
 
   const preview = useMemo(() => {
-    if (!selectedType || !description.trim()) return "";
-    const scopePart = scope.trim() ? `(${scope.trim()})` : "";
-    const breakingMark = breaking ? "!" : "";
-    const header = `${selectedType}${scopePart}${breakingMark}: ${description.trim()}`;
-    return body.trim() ? `${header}\n\n${body.trim()}` : header;
-  }, [selectedType, scope, breaking, description, body]);
+    if (!form.selectedType || !form.description.trim()) return "";
+    const scopePart = form.scope.trim() ? `(${form.scope.trim()})` : "";
+    const breakingMark = form.breaking ? "!" : "";
+    const header = `${form.selectedType}${scopePart}${breakingMark}: ${form.description.trim()}`;
+    return form.body.trim() ? `${header}\n\n${form.body.trim()}` : header;
+  }, [form.selectedType, form.scope, form.breaking, form.description, form.body]);
 
-  const canCommit = (hasStaged || amend) && selectedType !== null && description.trim().length > 0 && !committing;
+  const canCommit = useMemo(
+    () => (hasStaged || form.amend) && form.selectedType !== null && form.description.trim().length > 0 && !committing,
+    [hasStaged, form.amend, form.selectedType, form.description, committing]
+  );
 
   // When amend is toggled on, pre-fill the form with the last commit message
   useEffect(() => {
-    if (!amend) return;
+    if (!form.amend) return;
     git.getLastCommitMessage(repoPath).then((msg) => {
       // Try to parse the conventional commit format
       const match = msg.match(/^(\w+)(?:\(([^)]+)\))?(!)?: (.+?)(?:\n\n([\s\S]*))?$/);
       if (match) {
         const [, type, scopeVal, breakingMark, desc, bodyVal] = match;
         const knownType = COMMIT_TYPES.find((ct) => ct.value === type);
-        if (knownType) setSelectedType(knownType.value);
-        if (scopeVal) setScope(scopeVal);
-        setBreaking(breakingMark === "!");
-        setDescription(desc ?? "");
-        if (bodyVal?.trim()) { setBody(bodyVal.trim()); setBodyOpen(true); }
+        dispatch({
+          type: "FILL_FROM_COMMIT",
+          payload: {
+            selectedType: (knownType?.value ?? null) as CommitType | null,
+            scope: scopeVal || "",
+            breaking: breakingMark === "!",
+            description: desc || "",
+            body: bodyVal?.trim() || "",
+            bodyOpen: !!(bodyVal?.trim()),
+          },
+        });
       } else {
         // Non-conventional message — put it all in description
-        setDescription(msg.split("\n")[0] ?? "");
         const rest = msg.split("\n").slice(2).join("\n").trim();
-        if (rest) { setBody(rest); setBodyOpen(true); }
+        dispatch({
+          type: "FILL_FROM_COMMIT",
+          payload: {
+            description: msg.split("\n")[0] || "",
+            body: rest,
+            bodyOpen: !!rest,
+          },
+        });
       }
     }).catch(() => { /* no commits yet */ });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [amend]);
+  }, [form.amend, repoPath]);
 
-  async function handleCommit() {
+  const handleCommit = useCallback(async () => {
     if (!canCommit) return;
     setCommitting(true);
     try {
-      if (amend) {
+      if (form.amend) {
         await git.amendCommit(repoPath, preview);
         toast.success("Commit amended");
       } else {
         await git.commit(repoPath, preview);
         toast.success("Committed successfully");
       }
-      // reset form
-      setSelectedType(null);
-      setScope("");
-      setBreaking(false);
-      setDescription("");
-      setBody("");
-      setBodyOpen(false);
-      setAmend(false);
+      dispatch({ type: "RESET" });
       onCommitSuccess();
     } catch (e) {
       toast.error(`Commit failed: ${String(e)}`);
     } finally {
       setCommitting(false);
     }
-  }
+  }, [canCommit, form.amend, repoPath, preview, onCommitSuccess]);
 
   return (
     <div className="flex flex-col h-full overflow-y-auto p-4 gap-4">
@@ -123,11 +183,11 @@ export function ConventionalCommitBuilder({
             <button
               key={ct.value}
               title={ct.description}
-              onClick={() => setSelectedType(selectedType === ct.value ? null : ct.value)}
+              onClick={() => dispatch({ type: "SET_TYPE", payload: form.selectedType === ct.value ? null : ct.value })}
               className={cn(
                 "px-2.5 py-1 text-xs font-mono rounded border transition-all",
                 ct.color,
-                selectedType === ct.value
+                form.selectedType === ct.value
                   ? "ring-2 ring-offset-1 ring-offset-background ring-current font-semibold"
                   : "opacity-70 hover:opacity-100"
               )}
@@ -146,8 +206,8 @@ export function ConventionalCommitBuilder({
         <Input
           id="commit-scope"
           placeholder="auth, ui, api…"
-          value={scope}
-          onChange={(e) => setScope(e.target.value)}
+          value={form.scope}
+          onChange={(e) => dispatch({ type: "SET_SCOPE", payload: e.target.value })}
           className="h-8 font-mono text-sm"
         />
       </div>
@@ -156,11 +216,11 @@ export function ConventionalCommitBuilder({
       <div className="flex items-center gap-3">
         <Switch
           id="breaking"
-          checked={breaking}
-          onCheckedChange={setBreaking}
+          checked={form.breaking}
+          onCheckedChange={(checked) => dispatch({ type: "SET_BREAKING", payload: checked })}
         />
         <Label htmlFor="breaking" className="flex items-center gap-1.5 cursor-pointer text-sm">
-          <AlertTriangle size={13} className={cn("transition-colors", breaking ? "text-red-400" : "text-muted-foreground")} />
+          <AlertTriangle size={13} className={cn("transition-colors", form.breaking ? "text-red-400" : "text-muted-foreground")} />
           Breaking change
         </Label>
       </div>
@@ -173,38 +233,38 @@ export function ConventionalCommitBuilder({
           </Label>
           <span className={cn(
             "text-[10px] tabular-nums",
-            description.length > 72 ? "text-red-400" :
-            description.length > 50 ? "text-amber-400" :
+            form.description.length > 72 ? "text-red-400" :
+            form.description.length > 50 ? "text-amber-400" :
             "text-muted-foreground/50"
           )}>
-            {description.length}/72
+            {form.description.length}/72
           </span>
         </div>
         <Input
           id="commit-desc"
           placeholder="Short description…"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
+          value={form.description}
+          onChange={(e) => dispatch({ type: "SET_DESCRIPTION", payload: e.target.value })}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey && canCommit) handleCommit();
           }}
-          className={cn("h-8 text-sm", description.length > 72 && "border-red-500/50 focus-visible:ring-red-500/30")}
+          className={cn("h-8 text-sm", form.description.length > 72 && "border-red-500/50 focus-visible:ring-red-500/30")}
         />
       </div>
 
       {/* Body (collapsible) */}
-      <Collapsible open={bodyOpen} onOpenChange={setBodyOpen}>
+      <Collapsible open={form.bodyOpen} onOpenChange={(open) => dispatch({ type: "SET_BODY_OPEN", payload: open })}>
         <CollapsibleTrigger asChild>
           <button className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted-foreground font-semibold hover:text-foreground transition-colors">
             Body <span className="normal-case font-normal text-muted-foreground/60">(optional)</span>
-            {bodyOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            {form.bodyOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
           </button>
         </CollapsibleTrigger>
         <CollapsibleContent className="mt-1.5">
           <Textarea
             placeholder="Additional context, motivation, or migration notes…"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
+            value={form.body}
+            onChange={(e) => dispatch({ type: "SET_BODY", payload: e.target.value })}
             onKeyDown={(e) => {
               if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && canCommit) handleCommit();
             }}
@@ -228,17 +288,17 @@ export function ConventionalCommitBuilder({
       <div className="flex items-center gap-3">
         <Switch
           id="amend"
-          checked={amend}
-          onCheckedChange={setAmend}
+          checked={form.amend}
+          onCheckedChange={(checked) => dispatch({ type: "SET_AMEND", payload: checked })}
         />
         <Label htmlFor="amend" className="flex items-center gap-1.5 cursor-pointer text-sm">
-          <Pencil size={13} className={cn("transition-colors", amend ? "text-amber-400" : "text-muted-foreground")} />
+          <Pencil size={13} className={cn("transition-colors", form.amend ? "text-amber-400" : "text-muted-foreground")} />
           Amend last commit
         </Label>
       </div>
 
       {/* Hints */}
-      {!hasStaged && !amend && (
+      {!hasStaged && !form.amend && (
         <div className="flex items-center gap-2 text-xs text-amber-400 rounded-md bg-amber-500/10 border border-amber-500/20 px-3 py-2">
           <AlertTriangle size={13} />
           Stage at least one file to commit.
@@ -253,10 +313,10 @@ export function ConventionalCommitBuilder({
           onClick={handleCommit}
         >
           <GitCommitHorizontal size={16} />
-          {committing ? (amend ? "Amending…" : "Committing…") : (amend ? "Amend Commit" : "Commit")}
+          {committing ? (form.amend ? "Amending…" : "Committing…") : (form.amend ? "Amend Commit" : "Commit")}
           {canCommit && (
             <Badge variant="secondary" className="ml-auto font-mono text-[10px] h-5 px-1.5">
-              {selectedType}
+              {form.selectedType}
             </Badge>
           )}
         </Button>

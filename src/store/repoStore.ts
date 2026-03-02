@@ -4,6 +4,14 @@ import type { FileStatus, BranchInfo, WorktreeInfo, StashInfo } from "@/lib/git"
 
 const MAX_RECENT = 10;
 
+interface BranchCacheEntry {
+  branches: BranchInfo[];
+  worktrees: WorktreeInfo[];
+  currentBranch: string;
+  mainRepoPath: string | null;
+  updatedAt: number;
+}
+
 interface RepoState {
   // Persistent
   repoPath: string | null;
@@ -13,6 +21,8 @@ interface RepoState {
   branches: BranchInfo[];
   currentBranch: string;
   worktrees: WorktreeInfo[];
+  mainRepoPath: string | null; // Cached main worktree path for faster lookups
+  branchCache: Record<string, BranchCacheEntry>;
   stashes: StashInfo[];
   isLoadingStatus: boolean;
   isLoadingBranches: boolean;
@@ -30,6 +40,10 @@ interface RepoActions {
   setCurrentBranch: (name: string) => void;
   setLoadingBranches: (v: boolean) => void;
   setWorktrees: (worktrees: WorktreeInfo[]) => void;
+  setMainRepoPath: (path: string | null) => void;
+  setBranchCache: (repoPath: string, entry: BranchCacheEntry) => void;
+  clearBranchCache: (repoPath?: string) => void;
+  getBranchCache: (repoPath: string) => BranchCacheEntry | null;
   setLoadingWorktrees: (v: boolean) => void;
   setStashes: (stashes: StashInfo[]) => void;
   setLoadingStashes: (v: boolean) => void;
@@ -44,6 +58,8 @@ export const useRepoStore = create<RepoState & RepoActions>()(
       branches: [],
       currentBranch: "",
       worktrees: [],
+      mainRepoPath: null,
+      branchCache: {},
       stashes: [],
       isLoadingStatus: false,
       isLoadingBranches: false,
@@ -65,6 +81,8 @@ export const useRepoStore = create<RepoState & RepoActions>()(
           branches: [],
           currentBranch: "",
           worktrees: [],
+          mainRepoPath: null,
+          branchCache: {},
           stashes: [],
         }),
 
@@ -77,6 +95,24 @@ export const useRepoStore = create<RepoState & RepoActions>()(
       setCurrentBranch: (name) => set({ currentBranch: name }),
       setLoadingBranches: (v) => set({ isLoadingBranches: v }),
       setWorktrees: (worktrees) => set({ worktrees }),
+      setMainRepoPath: (path) => set({ mainRepoPath: path }),
+      setBranchCache: (repoPath, entry) =>
+        set((s) => ({
+          branchCache: {
+            ...s.branchCache,
+            [repoPath]: entry,
+          },
+        })),
+      clearBranchCache: (repoPath) =>
+        set((s) => {
+          if (!repoPath) {
+            return { branchCache: {} };
+          }
+          const next = { ...s.branchCache };
+          delete next[repoPath];
+          return { branchCache: next };
+        }),
+      getBranchCache: (repoPath) => get().branchCache[repoPath] ?? null,
       setLoadingWorktrees: (v) => set({ isLoadingWorktrees: v }),
       setStashes: (stashes) => set({ stashes }),
       setLoadingStashes: (v) => set({ isLoadingStashes: v }),
@@ -86,6 +122,7 @@ export const useRepoStore = create<RepoState & RepoActions>()(
       partialize: (state) => ({
         repoPath: state.repoPath,
         recentRepos: state.recentRepos,
+        branchCache: state.branchCache,
       }),
     }
   )

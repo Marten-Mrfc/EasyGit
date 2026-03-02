@@ -11,6 +11,8 @@ import { ChangesViewHeader } from "./ChangesViewHeader";
 import { FileListPanel } from "./FileListPanel";
 import { DiffOrCommitPanel } from "./DiffOrCommitPanel";
 import { PublishDialog } from "./PublishDialog";
+import { BranchesDialog } from "./BranchesDialog";
+import { WorktreeDialog } from "./WorktreeDialog";
 
 export function ChangesView() {
   const {
@@ -30,16 +32,19 @@ export function ChangesView() {
   const [diffFile, setDiffFile] = useState<FileStatus | null>(null);
   const [diffStaged, setDiffStaged] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [branchesDialogOpen, setBranchesDialogOpen] = useState(false);
+  const [worktreeDialogOpen, setWorktreeDialogOpen] = useState(false);
   const [isPushing, setIsPushing] = useState(false);
 
   // Memoize the refresh callback with useTransition for non-blocking updates
   const refreshStatus = useCallback(async () => {
-    if (!repoPath) return;
+    const latestRepoPath = useRepoStore.getState().repoPath;
+    if (!latestRepoPath) return;
     setLoadingStatus(true);
     try {
       const [files, branch] = await Promise.all([
-        git.getStatus(repoPath),
-        git.getCurrentBranch(repoPath),
+        git.getStatus(latestRepoPath),
+        git.getCurrentBranch(latestRepoPath),
       ]);
       // Wrap state updates in transition to keep UI responsive
       startTransition(() => {
@@ -51,11 +56,11 @@ export function ChangesView() {
     } finally {
       setLoadingStatus(false);
     }
-  }, [repoPath, setStatus, setCurrentBranch, setLoadingStatus]);
+  }, [setStatus, setCurrentBranch, setLoadingStatus, startTransition]);
 
   useEffect(() => {
     refreshStatus();
-  }, [refreshStatus]);
+  }, [repoPath, refreshStatus]);
 
   // Phase 1 cache lifecycle: clear cache when leaving the current repo context.
   useEffect(() => {
@@ -81,6 +86,24 @@ export function ChangesView() {
   }, [diffFile]);
 
   // Memoize handler callbacks
+  const handleBranchChange = useCallback(() => {
+    // Branch change is handled in the dropdown itself
+    // Just refresh status after a small delay to let git settle
+    setTimeout(() => refreshStatus(), 100);
+  }, [refreshStatus]);
+
+  const handleManageBranches = useCallback(() => {
+    startTransition(() => {
+      setBranchesDialogOpen(true);
+    });
+  }, []);
+
+  const handleManageWorktrees = useCallback(() => {
+    startTransition(() => {
+      setWorktreeDialogOpen(true);
+    });
+  }, []);
+
   const handlePull = useCallback(async () => {
     if (!repoPath) return;
     try {
@@ -176,6 +199,9 @@ export function ChangesView() {
         onPush={handlePush}
         onRefresh={refreshStatus}
         isPushing={isPushing}
+        onBranchChange={handleBranchChange}
+        onManageBranches={handleManageBranches}
+        onManageWorktrees={handleManageWorktrees}
       />
 
       {/* Main resizable panels - each loads independently */}
@@ -215,6 +241,26 @@ export function ChangesView() {
         }}
         repoPath={repoPath!}
         onSuccess={handlePublishSuccess}
+      />
+
+      {/* Branches dialog - lazy loads only when needed */}
+      <BranchesDialog
+        open={branchesDialogOpen}
+        onOpenChange={(open) => {
+          startTransition(() => {
+            setBranchesDialogOpen(open);
+          });
+        }}
+      />
+
+      {/* Worktree dialog - lazy loads only when needed */}
+      <WorktreeDialog
+        open={worktreeDialogOpen}
+        onOpenChange={(open) => {
+          startTransition(() => {
+            setWorktreeDialogOpen(open);
+          });
+        }}
       />
     </div>
   );

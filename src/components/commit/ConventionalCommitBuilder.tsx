@@ -34,20 +34,26 @@ type CommitType = typeof COMMIT_TYPES[number]["value"];
 interface FormState {
   selectedType: CommitType | null;
   scope: string;
-  breaking: boolean;
+  breakingBang: boolean;
+  breakingFooter: string;
   description: string;
   body: string;
   bodyOpen: boolean;
+  footers: string;
+  footerOpen: boolean;
   amend: boolean;
 }
 
 type FormAction =
   | { type: "SET_TYPE"; payload: CommitType | null }
   | { type: "SET_SCOPE"; payload: string }
-  | { type: "SET_BREAKING"; payload: boolean }
+  | { type: "SET_BREAKING_BANG"; payload: boolean }
+  | { type: "SET_BREAKING_FOOTER"; payload: string }
   | { type: "SET_DESCRIPTION"; payload: string }
   | { type: "SET_BODY"; payload: string }
   | { type: "SET_BODY_OPEN"; payload: boolean }
+  | { type: "SET_FOOTERS"; payload: string }
+  | { type: "SET_FOOTER_OPEN"; payload: boolean }
   | { type: "SET_AMEND"; payload: boolean }
   | { type: "FILL_FROM_COMMIT"; payload: Partial<FormState> }
   | { type: "RESET" };
@@ -55,10 +61,13 @@ type FormAction =
 const initialFormState: FormState = {
   selectedType: null,
   scope: "",
-  breaking: false,
+  breakingBang: false,
+  breakingFooter: "",
   description: "",
   body: "",
   bodyOpen: false,
+  footers: "",
+  footerOpen: false,
   amend: false,
 };
 
@@ -68,14 +77,20 @@ function formReducer(state: FormState, action: FormAction): FormState {
       return { ...state, selectedType: action.payload };
     case "SET_SCOPE":
       return { ...state, scope: action.payload };
-    case "SET_BREAKING":
-      return { ...state, breaking: action.payload };
+    case "SET_BREAKING_BANG":
+      return { ...state, breakingBang: action.payload };
+    case "SET_BREAKING_FOOTER":
+      return { ...state, breakingFooter: action.payload };
     case "SET_DESCRIPTION":
       return { ...state, description: action.payload };
     case "SET_BODY":
       return { ...state, body: action.payload };
     case "SET_BODY_OPEN":
       return { ...state, bodyOpen: action.payload };
+    case "SET_FOOTERS":
+      return { ...state, footers: action.payload };
+    case "SET_FOOTER_OPEN":
+      return { ...state, footerOpen: action.payload };
     case "SET_AMEND":
       return { ...state, amend: action.payload };
     case "FILL_FROM_COMMIT":
@@ -93,6 +108,125 @@ interface ConventionalCommitBuilderProps {
   onCommitSuccess: () => void;
 }
 
+interface ParsedFooter {
+  token: string;
+  value: string;
+}
+
+const FOOTER_START_RE = /^(BREAKING CHANGE|BREAKING-CHANGE|[A-Za-z][A-Za-z0-9-]*)(?:: | #)(.*)$/;
+
+function parseFooterBlock(raw: string): { entries: ParsedFooter[]; isValid: boolean } {
+  const lines = raw.split(/\r?\n/);
+  const entries: ParsedFooter[] = [];
+
+  for (const line of lines) {
+    const match = line.match(FOOTER_START_RE);
+    if (match) {
+      const [, token, value] = match;
+      entries.push({ token, value });
+      continue;
+    }
+
+    if (line.trim().length === 0) {
+      if (entries.length === 0) {
+        return { entries: [], isValid: false };
+      }
+      entries[entries.length - 1].value += "\n";
+      continue;
+    }
+
+    if (entries.length === 0) {
+      return { entries: [], isValid: false };
+    }
+
+    entries[entries.length - 1].value += `\n${line}`;
+  }
+
+  return { entries, isValid: entries.length > 0 };
+}
+
+function tokenIsValid(token: string): boolean {
+  const upperToken = token.toUpperCase();
+  if (upperToken === "BREAKING CHANGE" || upperToken === "BREAKING-CHANGE") {
+    return token === "BREAKING CHANGE" || token === "BREAKING-CHANGE";
+  }
+  return /^[A-Za-z][A-Za-z0-9-]*$/.test(token);
+}
+
+function splitBodyAndFooters(rest: string): { body: string; footers: string } {
+  if (!rest.trim()) {
+    return { body: "", footers: "" };
+  }
+
+  const lines = rest.split(/\r?\n/);
+  let footerStart = -1;
+
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!FOOTER_START_RE.test(lines[i])) continue;
+    if (i > 0 && lines[i - 1].trim() !== "") continue;
+    footerStart = i;
+    break;
+  }
+
+  if (footerStart === -1) {
+    return { body: rest.trim(), footers: "" };
+  }
+
+  return {
+    body: lines.slice(0, footerStart).join("\n").trim(),
+    footers: lines.slice(footerStart).join("\n").trim(),
+  };
+}
+
+function parseCommitMessage(message: string): {
+  type: string;
+  scope: string;
+  hasBang: boolean;
+  description: string;
+  body: string;
+  breakingFooter: string;
+  footers: string;
+} | null {
+  const lines = message.split(/\r?\n/);
+  const header = (lines[0] ?? "").trim();
+  const headerMatch = header.match(/^([A-Za-z][A-Za-z0-9-]*)(?:\(([^)\s]+)\))?(!)?:\s+(.+)$/);
+  if (!headerMatch) {
+    return null;
+  }
+
+  const [, type, scope, bang, description] = headerMatch;
+  const rest = lines.slice(1).join("\n").replace(/^\n+/, "");
+  const { body, footers } = splitBodyAndFooters(rest);
+
+  let breakingFooter = "";
+  let remainingFooters = footers;
+  if (footers.trim()) {
+    const parsed = parseFooterBlock(footers.trim());
+    if (parsed.isValid) {
+      const nonBreaking = parsed.entries.filter((entry) => {
+        const upperToken = entry.token.toUpperCase();
+        return upperToken !== "BREAKING CHANGE" && upperToken !== "BREAKING-CHANGE";
+      });
+      const breaking = parsed.entries.find((entry) => {
+        const upperToken = entry.token.toUpperCase();
+        return upperToken === "BREAKING CHANGE" || upperToken === "BREAKING-CHANGE";
+      });
+      breakingFooter = breaking?.value.trim() ?? "";
+      remainingFooters = nonBreaking.map((entry) => `${entry.token}: ${entry.value}`).join("\n").trim();
+    }
+  }
+
+  return {
+    type,
+    scope: scope ?? "",
+    hasBang: bang === "!",
+    description,
+    body,
+    breakingFooter,
+    footers: remainingFooters,
+  };
+}
+
 export function ConventionalCommitBuilder({
   repoPath,
   hasStaged,
@@ -101,37 +235,87 @@ export function ConventionalCommitBuilder({
   const [form, dispatch] = useReducer(formReducer, initialFormState);
   const [committing, setCommitting] = useState(false);
 
+  const scopeInvalid = useMemo(() => {
+    const trimmed = form.scope.trim();
+    if (!trimmed) return false;
+    return !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(trimmed);
+  }, [form.scope]);
+
+  const footerValidation = useMemo(() => {
+    const trimmed = form.footers.trim();
+    if (!trimmed) {
+      return { isValid: true, invalidToken: "" };
+    }
+
+    const parsed = parseFooterBlock(trimmed);
+    if (!parsed.isValid) {
+      return { isValid: false, invalidToken: "" };
+    }
+
+    const invalidEntry = parsed.entries.find((entry) => !tokenIsValid(entry.token));
+    if (invalidEntry) {
+      return { isValid: false, invalidToken: invalidEntry.token };
+    }
+
+    return { isValid: true, invalidToken: "" };
+  }, [form.footers]);
+
   const preview = useMemo(() => {
     if (!form.selectedType || !form.description.trim()) return "";
     const scopePart = form.scope.trim() ? `(${form.scope.trim()})` : "";
-    const breakingMark = form.breaking ? "!" : "";
+    const breakingMark = form.breakingBang ? "!" : "";
     const header = `${form.selectedType}${scopePart}${breakingMark}: ${form.description.trim()}`;
-    return form.body.trim() ? `${header}\n\n${form.body.trim()}` : header;
-  }, [form.selectedType, form.scope, form.breaking, form.description, form.body]);
+
+    const sections: string[] = [];
+    if (form.body.trim()) {
+      sections.push(form.body.trim());
+    }
+
+    const footerLines: string[] = [];
+    if (form.breakingFooter.trim()) {
+      footerLines.push(`BREAKING CHANGE: ${form.breakingFooter.trim()}`);
+    }
+    if (form.footers.trim()) {
+      footerLines.push(form.footers.trim());
+    }
+    if (footerLines.length > 0) {
+      sections.push(footerLines.join("\n"));
+    }
+
+    return sections.length > 0 ? `${header}\n\n${sections.join("\n\n")}` : header;
+  }, [form.selectedType, form.scope, form.breakingBang, form.description, form.body, form.breakingFooter, form.footers]);
 
   const canCommit = useMemo(
-    () => (hasStaged || form.amend) && form.selectedType !== null && form.description.trim().length > 0 && !committing,
-    [hasStaged, form.amend, form.selectedType, form.description, committing]
+    () => {
+      return (hasStaged || form.amend)
+        && form.selectedType !== null
+        && form.description.trim().length > 0
+        && !scopeInvalid
+        && footerValidation.isValid
+        && !committing;
+    },
+    [hasStaged, form.amend, form.selectedType, form.description, scopeInvalid, footerValidation.isValid, committing]
   );
 
   // When amend is toggled on, pre-fill the form with the last commit message
   useEffect(() => {
     if (!form.amend) return;
     git.getLastCommitMessage(repoPath).then((msg) => {
-      // Try to parse the conventional commit format
-      const match = msg.match(/^(\w+)(?:\(([^)]+)\))?(!)?: (.+?)(?:\n\n([\s\S]*))?$/);
-      if (match) {
-        const [, type, scopeVal, breakingMark, desc, bodyVal] = match;
-        const knownType = COMMIT_TYPES.find((ct) => ct.value === type);
+      const parsed = parseCommitMessage(msg);
+      if (parsed) {
+        const knownType = COMMIT_TYPES.find((ct) => ct.value === parsed.type.toLowerCase());
         dispatch({
           type: "FILL_FROM_COMMIT",
           payload: {
             selectedType: (knownType?.value ?? null) as CommitType | null,
-            scope: scopeVal || "",
-            breaking: breakingMark === "!",
-            description: desc || "",
-            body: bodyVal?.trim() || "",
-            bodyOpen: !!(bodyVal?.trim()),
+            scope: parsed.scope,
+            breakingBang: parsed.hasBang,
+            breakingFooter: parsed.breakingFooter,
+            description: parsed.description,
+            body: parsed.body,
+            bodyOpen: !!parsed.body,
+            footers: parsed.footers,
+            footerOpen: !!(parsed.breakingFooter || parsed.footers),
           },
         });
       } else {
@@ -143,6 +327,10 @@ export function ConventionalCommitBuilder({
             description: msg.split("\n")[0] || "",
             body: rest,
             bodyOpen: !!rest,
+            footers: "",
+            footerOpen: false,
+            breakingFooter: "",
+            breakingBang: false,
           },
         });
       }
@@ -213,14 +401,27 @@ export function ConventionalCommitBuilder({
       {/* Breaking change */}
       <div className="flex items-center gap-3">
         <Switch
-          id="breaking"
-          checked={form.breaking}
-          onCheckedChange={(checked) => dispatch({ type: "SET_BREAKING", payload: checked })}
+          id="breaking-bang"
+          checked={form.breakingBang}
+          onCheckedChange={(checked) => dispatch({ type: "SET_BREAKING_BANG", payload: checked })}
         />
-        <Label htmlFor="breaking" className="flex items-center gap-1.5 cursor-pointer text-sm">
-          <AlertTriangle size={13} className={cn("transition-colors", form.breaking ? "text-red-400" : "text-muted-foreground")} />
-          Breaking change
+        <Label htmlFor="breaking-bang" className="flex items-center gap-1.5 cursor-pointer text-sm">
+          <AlertTriangle size={13} className={cn("transition-colors", form.breakingBang ? "text-red-400" : "text-muted-foreground")} />
+          Add ! marker to header
         </Label>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="breaking-footer" className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">
+          Breaking Footer <span className="normal-case font-normal text-muted-foreground/60">(optional)</span>
+        </Label>
+        <Input
+          id="breaking-footer"
+          placeholder="Describe the breaking change..."
+          value={form.breakingFooter}
+          onChange={(e) => dispatch({ type: "SET_BREAKING_FOOTER", payload: e.target.value })}
+          className="h-8 text-sm"
+        />
       </div>
 
       {/* Description */}
@@ -248,6 +449,11 @@ export function ConventionalCommitBuilder({
           }}
           className={cn("h-8 text-sm", form.description.length > 72 && "border-red-500/50 focus-visible:ring-red-500/30")}
         />
+        {scopeInvalid && (
+          <p className="text-[10px] text-red-400">
+            Scope must be a noun-like token (letters, numbers, dot, slash, underscore, hyphen).
+          </p>
+        )}
       </div>
 
       {/* Body (collapsible) */}
@@ -269,6 +475,32 @@ export function ConventionalCommitBuilder({
             rows={3}
             className="text-sm resize-none font-mono"
           />
+        </CollapsibleContent>
+      </Collapsible>
+
+      <Collapsible open={form.footerOpen} onOpenChange={(open) => dispatch({ type: "SET_FOOTER_OPEN", payload: open })}>
+        <CollapsibleTrigger asChild>
+          <button className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted-foreground font-semibold hover:text-foreground transition-colors">
+            Footers <span className="normal-case font-normal text-muted-foreground/60">(optional)</span>
+            {form.footerOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-1.5 space-y-1.5">
+          <Textarea
+            placeholder={"Reviewed-by: Z\nRefs: #123"}
+            value={form.footers}
+            onChange={(e) => dispatch({ type: "SET_FOOTERS", payload: e.target.value })}
+            onKeyDown={(e) => {
+              if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && canCommit) handleCommit();
+            }}
+            rows={4}
+            className={cn("text-sm resize-none font-mono", !footerValidation.isValid && "border-red-500/50 focus-visible:ring-red-500/30")}
+          />
+          {!footerValidation.isValid && (
+            <p className="text-[10px] text-red-400">
+              Footer lines must start with TOKEN: value or TOKEN #value.{footerValidation.invalidToken ? ` Invalid token: ${footerValidation.invalidToken}` : ""}
+            </p>
+          )}
         </CollapsibleContent>
       </Collapsible>
 
@@ -320,7 +552,7 @@ export function ConventionalCommitBuilder({
         </Button>
         <p className="text-center text-[10px] text-muted-foreground/50">
           Press <kbd className="font-mono bg-muted px-1 py-0.5 rounded text-[9px]">Enter</kbd> or{" "}
-          <kbd className="font-mono bg-muted px-1 py-0.5 rounded text-[9px]">Ctrl+Enter</kbd> to commit
+          <kbd className="font-mono bg-muted px-1 py-0.5 rounded text-[9px]">Ctrl+Enter</kbd> to commit from multi-line fields
         </p>
       </div>
     </div>

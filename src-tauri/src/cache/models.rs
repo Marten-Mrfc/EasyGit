@@ -34,6 +34,9 @@ pub struct CacheEntry {
     pub timestamp: u64,
     pub access_count: u32,
     pub size_bytes: usize,
+    /// File modification time (seconds since epoch) to detect changes
+    #[serde(default)]
+    pub file_mtime: Option<u64>,
 }
 
 /// Result of a diff operation

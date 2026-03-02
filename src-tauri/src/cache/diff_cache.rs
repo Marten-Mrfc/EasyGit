@@ -213,11 +213,45 @@ impl DiffCache {
         self.evict_memory_if_needed();
     }
 
+    /// Get file modification time in seconds since epoch
+    fn get_file_mtime(repo_path: &str, file_path: &str) -> Option<u64> {
+        let full_path = std::path::Path::new(repo_path).join(file_path);
+        let metadata = std::fs::metadata(&full_path).ok()?;
+        let mtime = metadata.modified().ok()?;
+        Some(mtime.duration_since(UNIX_EPOCH).ok()?.as_secs())
+    }
+
+    /// Check if cached entry is stale based on file modification time
+    fn is_stale(&self, entry: &CacheEntry, repo_path: &str, file_path: &str) -> bool {
+        let Some(cached_mtime) = entry.file_mtime else {
+            // Old cache entries without mtime — treat as potentially stale
+            return false; // Keep for now, will get mtime on next update
+        };
+
+        let Some(current_mtime) = Self::get_file_mtime(repo_path, file_path) else {
+            // File doesn't exist or can't be read — assume stale
+            return true;
+        };
+
+        current_mtime != cached_mtime
+    }
+
     /// Get a cached diff, updating access metadata
     pub fn get(&self, repo_path: &str, file_path: &str, staged: bool) -> Option<CacheEntry> {
         let key = Self::make_key(repo_path, file_path, staged);
 
         if let Some(mut entry) = self.memory.get_mut(&key) {
+            // Check if cached data is stale based on file mtime
+            if self.is_stale(&entry, repo_path, file_path) {
+                drop(entry); // Release the lock
+                self.memory.remove(&key);
+                if let Ok(mut order) = self.access_order.lock() {
+                    order.shift_remove(&key);
+                }
+                self.counters.misses.fetch_add(1, Ordering::Relaxed);
+                return None; // Cache miss due to staleness
+            }
+
             self.counters.memory_hits.fetch_add(1, Ordering::Relaxed);
             // Update access metadata
             entry.access_count = entry.access_count.saturating_add(1);
@@ -231,6 +265,16 @@ impl DiffCache {
                 self.counters.misses.fetch_add(1, Ordering::Relaxed);
                 return None;
             };
+
+            // Check if disk-cached data is stale
+            if self.is_stale(&disk_entry, repo_path, file_path) {
+                if let Some(db) = &self.disk {
+                    let _ = db.remove(key.as_bytes());
+                }
+                self.counters.misses.fetch_add(1, Ordering::Relaxed);
+                return None; // Cache miss due to staleness
+            }
+
             self.counters.disk_hits.fetch_add(1, Ordering::Relaxed);
             disk_entry.access_count = disk_entry.access_count.saturating_add(1);
             disk_entry.timestamp = Self::current_timestamp();
@@ -258,6 +302,7 @@ impl DiffCache {
     ) {
         let key = Self::make_key(repo_path, file_path, staged);
         let size_bytes = diff_text.len();
+        let file_mtime = Self::get_file_mtime(repo_path, file_path);
 
         let entry = CacheEntry {
             file_path: file_path.to_string(),
@@ -266,6 +311,7 @@ impl DiffCache {
             timestamp: Self::current_timestamp(),
             access_count: 0,
             size_bytes,
+            file_mtime,
         };
 
         self.insert_memory_entry_by_key(key.clone(), entry.clone());

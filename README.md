@@ -16,7 +16,7 @@ A modern, open-source Git client for Windows built with [Tauri v2](https://tauri
 - **Stash manager** — push with a message, apply, pop, and drop stashes
 - **Commit history** — scrollable log with author, date, and message; per-file history and blame
 - **Push / Pull / Fetch** — with automatic upstream tracking setup on first push
-- **Publish to GitHub** — create a new GitHub repository and push in one step if no remote is configured
+- **Publish to GitHub** — create a new GitHub repository and push in one step if no remois configured
 - **GitHub & GitLab auth** — Device Flow OAuth (GitHub) or Personal Access Token; tokens stored locally
 - **Auto-updater** — built-in update check against GitHub Releases; one-click install
 - **Repo switcher** — quick-access popover for recently opened repositories

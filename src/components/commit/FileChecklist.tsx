@@ -106,15 +106,25 @@ function FileRow({
       )}
       onClick={() => onViewDiff?.(file, type === "staged")}
       onDoubleClick={toggle}
-      title="Single-click to view diff, double-click to stage/unstage"
+      title="Single-click to view diff, double-click row to stage/unstage, or click checkbox"
     >
-      <Icon
-        size={15}
-        className={cn(
-          "shrink-0",
-          type === "staged" ? "text-primary" : "text-muted-foreground"
-        )}
-      />
+      <span
+        className="shrink-0 inline-flex items-center justify-center"
+        onClick={(e) => {
+          e.stopPropagation();
+          void toggle();
+        }}
+        onDoubleClick={(e) => e.stopPropagation()}
+        title="Click to stage/unstage"
+      >
+        <Icon
+          size={15}
+          className={cn(
+            "shrink-0",
+            type === "staged" ? "text-primary" : "text-muted-foreground"
+          )}
+        />
+      </span>
       <Badge
         variant="outline"
         className={cn("h-4 px-1 text-[10px] font-mono leading-none shrink-0", styleClass)}

@@ -1,5 +1,5 @@
 import { useState, useReducer, useMemo, useEffect, useCallback } from "react";
-import { GitCommitHorizontal, ChevronDown, ChevronUp, AlertTriangle, Pencil } from "lucide-react";
+import { GitCommitHorizontal, AlertTriangle, Pencil, X, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -8,224 +8,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { git } from "@/lib/git";
-
-const COMMIT_TYPES = [
-  { value: "feat",     label: "feat",     description: "New feature",         color: "text-green-400  border-green-500/40  bg-green-500/10  hover:bg-green-500/20" },
-  { value: "fix",      label: "fix",      description: "Bug fix",             color: "text-red-400    border-red-500/40    bg-red-500/10    hover:bg-red-500/20" },
-  { value: "chore",    label: "chore",    description: "Build/tool changes",  color: "text-zinc-400   border-zinc-500/40   bg-zinc-500/10   hover:bg-zinc-500/20" },
-  { value: "docs",     label: "docs",     description: "Documentation",       color: "text-sky-400    border-sky-500/40    bg-sky-500/10    hover:bg-sky-500/20" },
-  { value: "refactor", label: "refactor", description: "Code restructuring",  color: "text-purple-400 border-purple-500/40 bg-purple-500/10 hover:bg-purple-500/20" },
-  { value: "test",     label: "test",     description: "Adding tests",        color: "text-yellow-400 border-yellow-500/40 bg-yellow-500/10 hover:bg-yellow-500/20" },
-  { value: "ci",       label: "ci",       description: "CI/CD changes",       color: "text-blue-400   border-blue-500/40   bg-blue-500/10   hover:bg-blue-500/20" },
-  { value: "perf",     label: "perf",     description: "Performance tweak",   color: "text-orange-400 border-orange-500/40 bg-orange-500/10 hover:bg-orange-500/20" },
-  { value: "style",    label: "style",    description: "Formatting, whitespace", color: "text-pink-400 border-pink-500/40 bg-pink-500/10 hover:bg-pink-500/20" },
-  { value: "revert",   label: "revert",   description: "Revert a commit",     color: "text-rose-400   border-rose-500/40   bg-rose-500/10   hover:bg-rose-500/20" },
-] as const;
-
-type CommitType = typeof COMMIT_TYPES[number]["value"];
-
-// Form state and reducer for efficient batch updates (§5.1 derived state)
-interface FormState {
-  selectedType: CommitType | null;
-  scope: string;
-  breakingBang: boolean;
-  breakingFooter: string;
-  description: string;
-  body: string;
-  bodyOpen: boolean;
-  footers: string;
-  footerOpen: boolean;
-  amend: boolean;
-}
-
-type FormAction =
-  | { type: "SET_TYPE"; payload: CommitType | null }
-  | { type: "SET_SCOPE"; payload: string }
-  | { type: "SET_BREAKING_BANG"; payload: boolean }
-  | { type: "SET_BREAKING_FOOTER"; payload: string }
-  | { type: "SET_DESCRIPTION"; payload: string }
-  | { type: "SET_BODY"; payload: string }
-  | { type: "SET_BODY_OPEN"; payload: boolean }
-  | { type: "SET_FOOTERS"; payload: string }
-  | { type: "SET_FOOTER_OPEN"; payload: boolean }
-  | { type: "SET_AMEND"; payload: boolean }
-  | { type: "FILL_FROM_COMMIT"; payload: Partial<FormState> }
-  | { type: "RESET" };
-
-const initialFormState: FormState = {
-  selectedType: null,
-  scope: "",
-  breakingBang: false,
-  breakingFooter: "",
-  description: "",
-  body: "",
-  bodyOpen: false,
-  footers: "",
-  footerOpen: false,
-  amend: false,
-};
-
-function formReducer(state: FormState, action: FormAction): FormState {
-  switch (action.type) {
-    case "SET_TYPE":
-      return { ...state, selectedType: action.payload };
-    case "SET_SCOPE":
-      return { ...state, scope: action.payload };
-    case "SET_BREAKING_BANG":
-      return { ...state, breakingBang: action.payload };
-    case "SET_BREAKING_FOOTER":
-      return { ...state, breakingFooter: action.payload };
-    case "SET_DESCRIPTION":
-      return { ...state, description: action.payload };
-    case "SET_BODY":
-      return { ...state, body: action.payload };
-    case "SET_BODY_OPEN":
-      return { ...state, bodyOpen: action.payload };
-    case "SET_FOOTERS":
-      return { ...state, footers: action.payload };
-    case "SET_FOOTER_OPEN":
-      return { ...state, footerOpen: action.payload };
-    case "SET_AMEND":
-      return { ...state, amend: action.payload };
-    case "FILL_FROM_COMMIT":
-      return { ...state, ...action.payload };
-    case "RESET":
-      return initialFormState;
-    default:
-      return state;
-  }
-}
-
-interface ConventionalCommitBuilderProps {
-  repoPath: string;
-  hasStaged: boolean;
-  onCommitSuccess: () => void;
-}
-
-interface ParsedFooter {
-  token: string;
-  value: string;
-}
-
-const FOOTER_START_RE = /^(BREAKING CHANGE|BREAKING-CHANGE|[A-Za-z][A-Za-z0-9-]*)(?:: | #)(.*)$/;
-
-function parseFooterBlock(raw: string): { entries: ParsedFooter[]; isValid: boolean } {
-  const lines = raw.split(/\r?\n/);
-  const entries: ParsedFooter[] = [];
-
-  for (const line of lines) {
-    const match = line.match(FOOTER_START_RE);
-    if (match) {
-      const [, token, value] = match;
-      entries.push({ token, value });
-      continue;
-    }
-
-    if (line.trim().length === 0) {
-      if (entries.length === 0) {
-        return { entries: [], isValid: false };
-      }
-      entries[entries.length - 1].value += "\n";
-      continue;
-    }
-
-    if (entries.length === 0) {
-      return { entries: [], isValid: false };
-    }
-
-    entries[entries.length - 1].value += `\n${line}`;
-  }
-
-  return { entries, isValid: entries.length > 0 };
-}
-
-function tokenIsValid(token: string): boolean {
-  const upperToken = token.toUpperCase();
-  if (upperToken === "BREAKING CHANGE" || upperToken === "BREAKING-CHANGE") {
-    return token === "BREAKING CHANGE" || token === "BREAKING-CHANGE";
-  }
-  return /^[A-Za-z][A-Za-z0-9-]*$/.test(token);
-}
-
-function splitBodyAndFooters(rest: string): { body: string; footers: string } {
-  if (!rest.trim()) {
-    return { body: "", footers: "" };
-  }
-
-  const lines = rest.split(/\r?\n/);
-  let footerStart = -1;
-
-  for (let i = 0; i < lines.length; i += 1) {
-    if (!FOOTER_START_RE.test(lines[i])) continue;
-    if (i > 0 && lines[i - 1].trim() !== "") continue;
-    footerStart = i;
-    break;
-  }
-
-  if (footerStart === -1) {
-    return { body: rest.trim(), footers: "" };
-  }
-
-  return {
-    body: lines.slice(0, footerStart).join("\n").trim(),
-    footers: lines.slice(footerStart).join("\n").trim(),
-  };
-}
-
-function parseCommitMessage(message: string): {
-  type: string;
-  scope: string;
-  hasBang: boolean;
-  description: string;
-  body: string;
-  breakingFooter: string;
-  footers: string;
-} | null {
-  const lines = message.split(/\r?\n/);
-  const header = (lines[0] ?? "").trim();
-  const headerMatch = header.match(/^([A-Za-z][A-Za-z0-9-]*)(?:\(([^)\s]+)\))?(!)?:\s+(.+)$/);
-  if (!headerMatch) {
-    return null;
-  }
-
-  const [, type, scope, bang, description] = headerMatch;
-  const rest = lines.slice(1).join("\n").replace(/^\n+/, "");
-  const { body, footers } = splitBodyAndFooters(rest);
-
-  let breakingFooter = "";
-  let remainingFooters = footers;
-  if (footers.trim()) {
-    const parsed = parseFooterBlock(footers.trim());
-    if (parsed.isValid) {
-      const nonBreaking = parsed.entries.filter((entry) => {
-        const upperToken = entry.token.toUpperCase();
-        return upperToken !== "BREAKING CHANGE" && upperToken !== "BREAKING-CHANGE";
-      });
-      const breaking = parsed.entries.find((entry) => {
-        const upperToken = entry.token.toUpperCase();
-        return upperToken === "BREAKING CHANGE" || upperToken === "BREAKING-CHANGE";
-      });
-      breakingFooter = breaking?.value.trim() ?? "";
-      remainingFooters = nonBreaking.map((entry) => `${entry.token}: ${entry.value}`).join("\n").trim();
-    }
-  }
-
-  return {
-    type,
-    scope: scope ?? "",
-    hasBang: bang === "!",
-    description,
-    body,
-    breakingFooter,
-    footers: remainingFooters,
-  };
-}
+import { COMMIT_TYPES, type CommitType, type ConventionalCommitBuilderProps } from "./types";
+import { parseFooterBlock, tokenIsValid, parseCommitMessage } from "./parser";
+import { formReducer, initialFormState } from "./reducer";
 
 export function ConventionalCommitBuilder({
   repoPath,
@@ -234,6 +20,7 @@ export function ConventionalCommitBuilder({
 }: ConventionalCommitBuilderProps) {
   const [form, dispatch] = useReducer(formReducer, initialFormState);
   const [committing, setCommitting] = useState(false);
+  const [viewAll, setViewAll] = useState(false);
 
   const scopeInvalid = useMemo(() => {
     const trimmed = form.scope.trim();
@@ -357,202 +144,324 @@ export function ConventionalCommitBuilder({
     }
   }, [canCommit, form.amend, repoPath, preview, onCommitSuccess]);
 
+  const addFooterTemplate = useCallback((token: string) => {
+    const hasContent = form.footers.trim().length > 0;
+    const template = `${token}: `;
+    dispatch({
+      type: "SET_FOOTERS",
+      payload: hasContent ? `${form.footers.trimEnd()}\n${template}` : template,
+    });
+  }, [form.footers]);
+
+  const handleClear = useCallback(() => {
+    dispatch({ type: "RESET" });
+    toast.info("Form cleared");
+  }, []);
+
+  const hasAnyContent = form.selectedType || form.description.trim() || form.scope.trim() || 
+                        form.body.trim() || form.footers.trim() || form.breakingBang || form.breakingFooter.trim();
+
+  // Progressive disclosure logic
+  const showQuestion = {
+    type: true, // Always show first question
+    description: viewAll || !!form.selectedType,
+    scope: viewAll || !!form.description.trim(),
+    breaking: viewAll || !!form.description.trim(),
+    body: viewAll || !!form.description.trim(),
+    footers: viewAll || !!form.description.trim(),
+  };
+
   return (
-    <div className="flex flex-col h-full overflow-y-auto p-4 gap-4">
-      {/* Commit type */}
-      <div className="space-y-2">
-        <Label className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">
-          Type
-        </Label>
-        <div className="flex flex-wrap gap-1.5">
-          {COMMIT_TYPES.map((ct) => (
-            <button
-              key={ct.value}
-              title={ct.description}
-              onClick={() => dispatch({ type: "SET_TYPE", payload: form.selectedType === ct.value ? null : ct.value })}
-              className={cn(
-                "px-2.5 py-1 text-xs font-mono rounded border transition-all",
-                ct.color,
-                form.selectedType === ct.value
-                  ? "ring-2 ring-offset-1 ring-offset-background ring-current font-semibold"
-                  : "opacity-70 hover:opacity-100"
-              )}
+    <div className="flex flex-col h-full overflow-y-auto p-4 gap-6">
+      {/* Header with clear button and view mode toggle */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Sparkles size={18} className="text-primary" />
+          <h3 className="text-sm font-semibold">Create Commit</h3>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setViewAll(!viewAll)}
+            className="h-7 px-2 text-xs"
+          >
+            {viewAll ? "Progressive" : "View All"}
+          </Button>
+          {hasAnyContent && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={handleClear}
+              className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
             >
-              {ct.label}
-            </button>
-          ))}
+              <X size={14} className="mr-1" />
+              Clear
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* Scope */}
-      <div className="space-y-1.5">
-        <Label htmlFor="commit-scope" className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">
-          Scope <span className="normal-case font-normal text-muted-foreground/60">(optional)</span>
-        </Label>
-        <Input
-          id="commit-scope"
-          placeholder="auth, ui, api…"
-          value={form.scope}
-          onChange={(e) => dispatch({ type: "SET_SCOPE", payload: e.target.value })}
-          className="h-8 font-mono text-sm"
-        />
-      </div>
-
-      {/* Breaking change */}
-      <div className="flex items-center gap-3">
-        <Switch
-          id="breaking-bang"
-          checked={form.breakingBang}
-          onCheckedChange={(checked) => dispatch({ type: "SET_BREAKING_BANG", payload: checked })}
-        />
-        <Label htmlFor="breaking-bang" className="flex items-center gap-1.5 cursor-pointer text-sm">
-          <AlertTriangle size={13} className={cn("transition-colors", form.breakingBang ? "text-red-400" : "text-muted-foreground")} />
-          Add ! marker to header
-        </Label>
-      </div>
-
-      <div className="space-y-1.5">
-        <Label htmlFor="breaking-footer" className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">
-          Breaking Footer <span className="normal-case font-normal text-muted-foreground/60">(optional)</span>
-        </Label>
-        <Input
-          id="breaking-footer"
-          placeholder="Describe the breaking change..."
-          value={form.breakingFooter}
-          onChange={(e) => dispatch({ type: "SET_BREAKING_FOOTER", payload: e.target.value })}
-          className="h-8 text-sm"
-        />
-      </div>
-
-      {/* Description */}
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between">
-          <Label htmlFor="commit-desc" className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">
-            Description
+      {/* Main content */}
+      <div className="space-y-5">
+        {/* Question 1: What kind of change? (Always visible) */}
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">
+            <span className="text-muted-foreground mr-1.5">1.</span>
+            What kind of change is this?
           </Label>
-          <span className={cn(
-            "text-[10px] tabular-nums",
-            form.description.length > 72 ? "text-red-400" :
-            form.description.length > 50 ? "text-amber-400" :
-            "text-muted-foreground/50"
-          )}>
-            {form.description.length}/72
-          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {COMMIT_TYPES.map((ct) => (
+              <button
+                key={ct.value}
+                title={ct.description}
+                onClick={() => dispatch({ type: "SET_TYPE", payload: form.selectedType === ct.value ? null : ct.value })}
+                className={cn(
+                  "px-3 py-1.5 text-xs font-medium rounded-md border transition-all",
+                  ct.color,
+                  form.selectedType === ct.value
+                    ? "ring-2 ring-offset-1 ring-offset-background ring-current font-semibold scale-105"
+                    : "opacity-70 hover:opacity-100 hover:scale-105"
+                )}
+              >
+                {ct.label}
+              </button>
+            ))}
+          </div>
+          {form.selectedType && (
+            <p className="text-xs text-muted-foreground pl-1">
+              → {COMMIT_TYPES.find(ct => ct.value === form.selectedType)?.description}
+            </p>
+          )}
         </div>
-        <Input
-          id="commit-desc"
-          placeholder="Short description…"
-          value={form.description}
-          onChange={(e) => dispatch({ type: "SET_DESCRIPTION", payload: e.target.value })}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey && canCommit) handleCommit();
-          }}
-          className={cn("h-8 text-sm", form.description.length > 72 && "border-red-500/50 focus-visible:ring-red-500/30")}
-        />
-        {scopeInvalid && (
-          <p className="text-[10px] text-red-400">
-            Scope must be a noun-like token (letters, numbers, dot, slash, underscore, hyphen).
-          </p>
+
+        {/* Question 2: Summary */}
+        {showQuestion.description && (
+          <div className="space-y-2 animate-in slide-in-from-left-2 fade-in duration-300">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="commit-desc" className="text-sm font-medium">
+                <span className="text-muted-foreground mr-1.5">2.</span>
+                What did you change?
+              </Label>
+              <span className={cn(
+                "text-[10px] tabular-nums font-mono",
+                form.description.length > 72 ? "text-red-400 font-semibold" :
+                form.description.length > 50 ? "text-amber-400" :
+                "text-muted-foreground/50"
+              )}>
+                {form.description.length}/72
+              </span>
+            </div>
+            <Input
+              id="commit-desc"
+              placeholder="e.g., add user authentication flow"
+              value={form.description}
+              onChange={(e) => dispatch({ type: "SET_DESCRIPTION", payload: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey && canCommit) handleCommit();
+              }}
+              className={cn(
+                "text-sm font-medium",
+                form.description.length > 72 && "border-red-500/50 focus-visible:ring-red-500/30"
+              )}
+            />
+            <p className="text-xs text-muted-foreground pl-1">
+              Keep it brief and clear
+            </p>
+          </div>
+        )}
+
+        {/* Question 3: Scope (optional) */}
+        {showQuestion.scope && (
+          <div className="space-y-2 animate-in slide-in-from-left-2 fade-in duration-300">
+            <Label htmlFor="commit-scope" className="text-sm font-medium">
+              <span className="text-muted-foreground mr-1.5">3.</span>
+              Which part of the project? <span className="font-normal text-muted-foreground text-xs">(optional)</span>
+            </Label>
+            <Input
+              id="commit-scope"
+              placeholder="e.g., auth, ui, api, core"
+              value={form.scope}
+              onChange={(e) => dispatch({ type: "SET_SCOPE", payload: e.target.value })}
+              className={cn(
+                "text-sm font-mono",
+                form.scope.trim() && "opacity-100",
+                !form.scope.trim() && "opacity-80 focus:opacity-100"
+              )}
+            />
+            {scopeInvalid && (
+              <p className="text-xs text-red-400 pl-1">
+                Use letters, numbers, dots, slashes, underscores, or hyphens only
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Question 4: Breaking change */}
+        {showQuestion.breaking && (
+          <div className="space-y-2 animate-in slide-in-from-left-2 fade-in duration-300">
+            <div className="flex items-center gap-2">
+              <Switch
+                id="breaking-bang"
+                checked={form.breakingBang}
+                onCheckedChange={(checked) => dispatch({ type: "SET_BREAKING_BANG", payload: checked })}
+              />
+              <Label htmlFor="breaking-bang" className="text-sm font-medium cursor-pointer flex items-center gap-1.5">
+                <span className="text-muted-foreground mr-1">4.</span>
+                Is this a breaking change?
+                <AlertTriangle size={14} className={cn("transition-colors", form.breakingBang ? "text-red-400" : "text-muted-foreground/50")} />
+              </Label>
+            </div>
+            
+            {form.breakingBang && (
+              <div className="ml-11 space-y-1.5 animate-in slide-in-from-left-2 duration-200">
+                <Label htmlFor="breaking-footer" className="text-xs text-muted-foreground">
+                  What breaks and how to fix it?
+                </Label>
+                <Textarea
+                  id="breaking-footer"
+                  placeholder="e.g., removed deprecated API endpoints, use v2 instead"
+                  value={form.breakingFooter}
+                  onChange={(e) => dispatch({ type: "SET_BREAKING_FOOTER", payload: e.target.value })}
+                  rows={2}
+                  className="text-sm resize-none"
+                />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Question 5: More context */}
+        {showQuestion.body && (
+          <div className="space-y-2 pt-3 border-t border-border/50 animate-in slide-in-from-left-2 fade-in duration-300">
+            <Label htmlFor="extended-body" className="text-sm font-medium">
+              <span className="text-muted-foreground mr-1.5">5.</span>
+              Need to explain more? <span className="font-normal text-muted-foreground text-xs">(optional)</span>
+            </Label>
+            <div className={cn("transition-opacity", form.body.trim() ? "opacity-100" : "opacity-80 focus-within:opacity-100")}>
+              <Textarea
+                id="extended-body"
+                placeholder="Add context, motivation, reasoning, or anything helpful for reviewers…"
+                value={form.body}
+                onChange={(e) => dispatch({ type: "SET_BODY", payload: e.target.value })}
+                onKeyDown={(e) => {
+                  if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && canCommit) handleCommit();
+                }}
+                rows={3}
+                className="text-sm resize-none"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Question 6: Metadata */}
+        {showQuestion.footers && (
+          <div className="space-y-2 animate-in slide-in-from-left-2 fade-in duration-300">
+            <Label htmlFor="additional-footers" className="text-sm font-medium">
+              <span className="text-muted-foreground mr-1.5">6.</span>
+              Add metadata? <span className="font-normal text-muted-foreground text-xs">(optional)</span>
+            </Label>
+
+            <div className="flex flex-wrap gap-1.5">
+              <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => addFooterTemplate("Refs")}>
+                + Issue Ref
+              </Button>
+              <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => addFooterTemplate("Reviewed-by")}>
+                + Reviewer
+              </Button>
+              <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => addFooterTemplate("Co-authored-by")}>
+                + Co-author
+              </Button>
+            </div>
+
+            <div className={cn("transition-opacity", form.footers.trim() ? "opacity-100" : "opacity-80 focus-within:opacity-100")}>
+              <Textarea
+                id="additional-footers"
+                placeholder={"Refs: #123\nReviewed-by: Jane Doe\nCo-authored-by: John Smith <john@example.com>"}
+                value={form.footers}
+                onChange={(e) => dispatch({ type: "SET_FOOTERS", payload: e.target.value })}
+                onKeyDown={(e) => {
+                  if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && canCommit) handleCommit();
+                }}
+                rows={3}
+                className={cn("text-sm resize-none font-mono", !footerValidation.isValid && "border-red-500/50 focus-visible:ring-red-500/30")}
+              />
+            </div>
+
+            {!footerValidation.isValid && (
+              <p className="text-xs text-red-400 pl-1">
+                Format: TOKEN: value or TOKEN #value{footerValidation.invalidToken ? ` (invalid: ${footerValidation.invalidToken})` : ""}
+              </p>
+            )}
+          </div>
         )}
       </div>
 
-      {/* Body (collapsible) */}
-      <Collapsible open={form.bodyOpen} onOpenChange={(open) => dispatch({ type: "SET_BODY_OPEN", payload: open })}>
-        <CollapsibleTrigger asChild>
-          <button className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted-foreground font-semibold hover:text-foreground transition-colors">
-            Body <span className="normal-case font-normal text-muted-foreground/60">(optional)</span>
-            {form.bodyOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-          </button>
-        </CollapsibleTrigger>
-        <CollapsibleContent className="mt-1.5">
-          <Textarea
-            placeholder="Additional context, motivation, or migration notes…"
-            value={form.body}
-            onChange={(e) => dispatch({ type: "SET_BODY", payload: e.target.value })}
-            onKeyDown={(e) => {
-              if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && canCommit) handleCommit();
-            }}
-            rows={3}
-            className="text-sm resize-none font-mono"
-          />
-        </CollapsibleContent>
-      </Collapsible>
-
-      <Collapsible open={form.footerOpen} onOpenChange={(open) => dispatch({ type: "SET_FOOTER_OPEN", payload: open })}>
-        <CollapsibleTrigger asChild>
-          <button className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted-foreground font-semibold hover:text-foreground transition-colors">
-            Footers <span className="normal-case font-normal text-muted-foreground/60">(optional)</span>
-            {form.footerOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-          </button>
-        </CollapsibleTrigger>
-        <CollapsibleContent className="mt-1.5 space-y-1.5">
-          <Textarea
-            placeholder={"Reviewed-by: Z\nRefs: #123"}
-            value={form.footers}
-            onChange={(e) => dispatch({ type: "SET_FOOTERS", payload: e.target.value })}
-            onKeyDown={(e) => {
-              if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && canCommit) handleCommit();
-            }}
-            rows={4}
-            className={cn("text-sm resize-none font-mono", !footerValidation.isValid && "border-red-500/50 focus-visible:ring-red-500/30")}
-          />
-          {!footerValidation.isValid && (
-            <p className="text-[10px] text-red-400">
-              Footer lines must start with TOKEN: value or TOKEN #value.{footerValidation.invalidToken ? ` Invalid token: ${footerValidation.invalidToken}` : ""}
-            </p>
-          )}
-        </CollapsibleContent>
-      </Collapsible>
-
       {/* Preview */}
       {preview && (
-        <div className="rounded-md border border-border bg-muted/40 px-3 py-2.5">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5 font-semibold">Preview</p>
-          <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-all leading-relaxed">
+        <div className="rounded-lg border-2 border-primary/20 bg-primary/5 p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <GitCommitHorizontal size={14} className="text-primary" />
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Preview
+            </p>
+          </div>
+          <pre className="text-xs font-mono text-foreground/90 whitespace-pre-wrap break-words leading-relaxed">
             {preview}
           </pre>
         </div>
       )}
 
-      {/* Amend toggle */}
-      <div className="flex items-center gap-3">
-        <Switch
-          id="amend"
-          checked={form.amend}
-          onCheckedChange={(checked) => dispatch({ type: "SET_AMEND", payload: checked })}
-        />
-        <Label htmlFor="amend" className="flex items-center gap-1.5 cursor-pointer text-sm">
-          <Pencil size={13} className={cn("transition-colors", form.amend ? "text-amber-400" : "text-muted-foreground")} />
-          Amend last commit
-        </Label>
+      {/* Options */}
+      <div className="pt-3 border-t border-border/50">
+        <div className="flex items-center gap-2">
+          <Switch
+            id="amend"
+            checked={form.amend}
+            onCheckedChange={(checked) => dispatch({ type: "SET_AMEND", payload: checked })}
+          />
+          <Label htmlFor="amend" className="text-sm font-medium cursor-pointer flex items-center gap-1.5">
+            Amend previous commit
+            <Pencil size={13} className={cn("transition-colors", form.amend ? "text-amber-400" : "text-muted-foreground/50")} />
+          </Label>
+        </div>
       </div>
 
-      {/* Hints */}
+      {/* Warnings */}
       {!hasStaged && !form.amend && (
-        <div className="flex items-center gap-2 text-xs text-amber-400 rounded-md bg-amber-500/10 border border-amber-500/20 px-3 py-2">
-          <AlertTriangle size={13} />
-          Stage at least one file to commit.
+        <div className="flex items-center gap-2 text-xs text-amber-400 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2.5">
+          <AlertTriangle size={15} />
+          <span>Stage at least one file to commit</span>
+        </div>
+      )}
+
+      {form.amend && (
+        <div className="flex items-center gap-2 text-xs text-amber-400 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2.5">
+          <AlertTriangle size={15} />
+          <span>Amending will modify your last commit — avoid if already pushed</span>
         </div>
       )}
 
       {/* Commit button */}
-      <div className="mt-auto pt-2 space-y-1.5">
+      <div className="mt-auto pt-4 space-y-2">
         <Button
-          className="w-full gap-2"
+          className="w-full gap-2 h-10 text-sm font-semibold"
           disabled={!canCommit}
           onClick={handleCommit}
         >
-          <GitCommitHorizontal size={16} />
-          {committing ? (form.amend ? "Amending…" : "Committing…") : (form.amend ? "Amend Commit" : "Commit")}
+          <GitCommitHorizontal size={18} />
+          {committing ? (form.amend ? "Amending…" : "Committing…") : (form.amend ? "Amend Commit" : "Commit Changes")}
           {canCommit && (
-            <Badge variant="secondary" className="ml-auto font-mono text-[10px] h-5 px-1.5">
+            <Badge variant="secondary" className="ml-auto font-mono text-xs h-5 px-2">
               {form.selectedType}
             </Badge>
           )}
         </Button>
-        <p className="text-center text-[10px] text-muted-foreground/50">
-          Press <kbd className="font-mono bg-muted px-1 py-0.5 rounded text-[9px]">Enter</kbd> or{" "}
-          <kbd className="font-mono bg-muted px-1 py-0.5 rounded text-[9px]">Ctrl+Enter</kbd> to commit from multi-line fields
+        <p className="text-center text-[10px] text-muted-foreground/60">
+          Press <kbd className="font-mono bg-muted px-1.5 py-0.5 rounded text-[9px]">Enter</kbd> in description or{" "}
+          <kbd className="font-mono bg-muted px-1.5 py-0.5 rounded text-[9px]">Ctrl+Enter</kbd> in text fields
         </p>
       </div>
     </div>
